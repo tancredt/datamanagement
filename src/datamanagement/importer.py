@@ -81,15 +81,18 @@ def process_realtime_data(incident_path):
     all_dfs = []
     
     for filename in csv_files:
+        #check it is a datalog file
         if not filename.lower().startswith('datalog'):
             continue
         
         csv_file = os.path.join(realtime_dir, filename)
         try:
+            #check file is not 0 bytes
             if os.path.getsize(csv_file) == 0:
                 continue
             
             df = pd.read_csv(csv_file)
+            #check the dataframe is not empty
             if df.empty:
                 continue
             
@@ -106,13 +109,17 @@ def process_realtime_data(incident_path):
                     new_cols.append(col_str.upper())
             
             df.columns = new_cols
-            
+
+            #sometime get phantom serial numbers with '?' in them. 
             if 'SERIAL NUMBER' in df.columns:
                 df = df[~df['SERIAL NUMBER'].astype(str).str.contains(r'\?', regex=True, na=False)]
-            
+            #only area rae plus data. Drop the MODEL NAME column
             if 'MODEL NAME' in df.columns:
                 df = df[df['MODEL NAME'] == 'AreaRAE Plus'].drop(columns=['MODEL NAME'])
-            
+            #drop the  time zone column
+            if 'TIME ZONE' in df.columns:
+                df = df.drop(columns=['TIME ZONE'])
+            #split the location into latitude and longitude then drop the location column
             if 'LOCATION' in df.columns:
                 df['Latitude'] = df['LOCATION'].str.extract(r'(?i)Lat:\s*([-\d\.]+)')
                 df['Longitude'] = df['LOCATION'].str.extract(r'(?i)Lng:\s*([-\d\.]+)')
@@ -128,39 +135,35 @@ def process_realtime_data(incident_path):
         return None
     
     combined_df = pd.concat(all_dfs, ignore_index=True)
-    
-    if 'SERIAL NUMBER' in combined_df.columns and 'LOG TIME' in combined_df.columns:
-        combined_df.drop_duplicates(subset=['SERIAL NUMBER', 'LOG TIME'], keep='first', inplace=True)
-        combined_df.sort_values(by='LOG TIME', inplace=True)
-    
-    if 'SITE' not in combined_df.columns:
-        combined_df['SITE'] = ""
-    else:
-        combined_df['SITE'] = combined_df['SITE'].fillna("").astype(str)
-        combined_df.loc[combined_df['SITE'].str.lower().isin(['nan', 'none', 'null']), 'SITE'] = ""
-    
+
+    #drop duplicates with the same LOG TIME and SERIAL NUMBER in case of overlapping raw files
+    combined_df.drop_duplicates(subset=['SERIAL NUMBER', 'LOG TIME'], keep='first', inplace=True)
+    combined_df.sort_values(by='LOG TIME', inplace=True)
+
+    #add an empty site column
+    combined_df['SITE'] = ""
+
+    #finding unique analytes, exclude these columns and the rest are analytes
     exclude_cols = {'LOG TIME', 'SERIAL NUMBER', 'SITE', 'Latitude', 'Longitude', 'Count', 
                     'MODEL NAME', 'LOCATION', 'STATUS', 'BATTERY', 'TIME ZONE', 'TIME_BIN', 'DEVICE'}
+        
+    unique_analytes = sorted([col for col in combined_df.columns if col not in exclude_cols])
     
-    existing_invalid_cols = [c for c in combined_df.columns if c.upper().startswith('INVALID')]
-    exclude_cols.update(existing_invalid_cols)
-    combined_df.drop(columns=existing_invalid_cols, inplace=True, errors='ignore')
-    
-    unique_gases = sorted([col for col in combined_df.columns if col not in exclude_cols])
-    
-    # Create per-gas INVALID columns
-    for gas in unique_gases:
-        combined_df[f"INVALID_{gas}"] = 0
+    # Create per-gas INVALID flag columns
+    for analyte in unique_analytes:
+        combined_df[f"INVALID_{analyte}"] = 0
     
     # ── 3. Add DEVICE column mapping SERIAL NUMBER to label ──
     if 'SERIAL NUMBER' in combined_df.columns:
         combined_df['DEVICE'] = combined_df['SERIAL NUMBER'].astype(str).str.strip().map(
             lambda s: serial_to_label.get(s, s)
         )
-    
+
+    #save file
     processed_file = os.path.join(processed_dir, "area_data.csv")
     combined_df.to_csv(processed_file, index=False)
-    
+
+    #save a list of unique devices and analytes to be used in combos
     meta_dir = os.path.join(incident_path, "meta")
     os.makedirs(meta_dir, exist_ok=True)
     
@@ -170,11 +173,13 @@ def process_realtime_data(incident_path):
     with open(os.path.join(meta_dir, "devices.json"), 'w', encoding='utf-8') as f:
         json.dump(unique_devices, f, indent=2)    
     
-    with open(os.path.join(meta_dir, "gases.json"), 'w', encoding='utf-8') as f:
-        json.dump(unique_gases, f, indent=2)
+    with open(os.path.join(meta_dir, "analytes.json"), 'w', encoding='utf-8') as f:
+        json.dump(unique_analytes, f, indent=2)
     
     return processed_file
 
+#This takes the log containing device locations and puts the site label in the SITE column
+#if the device is at location between the start and stop times
 def update_site_from_device_log(incident_path):
     processed_file = os.path.join(incident_path, "data", "processed", "area_data.csv")
     area_locations_file = os.path.join(incident_path, "mapping", "area_locations.json")
@@ -184,6 +189,7 @@ def update_site_from_device_log(incident_path):
     
     try:
         df = pd.read_csv(processed_file)
+        #reset all sites to "" in the processed dataframe
         df['SITE'] = ""
         
         # Clean up DEVICE column for matching
@@ -213,11 +219,12 @@ def update_site_from_device_log(incident_path):
                 continue
             
             start_dt = pd.to_datetime(start_time, errors='coerce')
+            #if the stop_dt is empty, it means the device is still there, so set it to the far future
             stop_dt = pd.to_datetime(stop_time, errors='coerce') if stop_time else pd.Timestamp('9999-12-31 23:59:59')
             
             if pd.isna(start_dt) or pd.isna(stop_dt):
                 continue
-            
+            #device is at a location if the start_dt is greater than the log time and less than or equal to stop time
             mask = (df['DEVICE'] == device_label) & (df['LOG TIME'] > start_dt) & (df['LOG TIME'] <= stop_dt)
             df.loc[mask, 'SITE'] = location
         
@@ -242,12 +249,6 @@ def update_validations(incident_path):
         invalid_cols = [c for c in df.columns if c.upper().startswith('INVALID_')]
         for col in invalid_cols:
             df[col] = 0
-        
-        # Clean up DEVICE column for matching
-        if 'DEVICE' in df.columns:
-            df['DEVICE'] = df['DEVICE'].fillna("").astype(str).str.strip()
-        else:
-            df['DEVICE'] = ""
         
         df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
         
