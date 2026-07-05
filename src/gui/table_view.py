@@ -1,0 +1,249 @@
+import os
+import sys
+import pandas as pd
+import numpy as np
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
+    QPushButton, QLabel, QHeaderView
+)
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
+from PySide6.QtGui import QColor
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+INVALID_BG_COLOR = QColor(255, 200, 200)
+THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
+
+# ─────────────────────────────────────────────────────────
+# Paginated Table Model (Embedded to avoid import issues)
+# ─────────────────────────────────────────────────────────
+class PaginatedTableModel(QAbstractTableModel):
+    def __init__(self, dec_pls_dict=None, page_size=100):
+        super().__init__()
+        self._full_df = pd.DataFrame()
+        self._current_df = pd.DataFrame()
+        self.dec_pls_dict = dec_pls_dict if dec_pls_dict is not None else {}
+        self.page_size = page_size
+        self.current_page = 0
+        self.total_pages = 0
+        self._invalid_cells = set()
+        self._show_invalid_bg = True
+        self._active_thresholds = {}
+        self.update_page()
+
+    def set_show_invalid_bg(self, show: bool):
+        self._show_invalid_bg = show
+
+    def set_active_thresholds(self, thresholds: dict):
+        self._active_thresholds = thresholds
+
+    def set_data(self, df):
+        self.beginResetModel()
+        self._full_df = df if df is not None and not df.empty else pd.DataFrame()
+        self.current_page = 0
+        self._rebuild_invalid_cache()
+        self.update_page()
+        self.endResetModel()
+
+    def update_page(self):
+        if len(self._full_df) == 0:
+            self._current_df = pd.DataFrame()
+            self.total_pages = 0
+        else:
+            self.total_pages = (len(self._full_df) + self.page_size - 1) // self.page_size
+            start = self.current_page * self.page_size
+            end = start + self.page_size
+            self._current_df = self._full_df.iloc[start:end]
+
+    def next_page(self):
+        if self.current_page < self.total_pages - 1:
+            self.beginResetModel()
+            self.current_page += 1
+            self.update_page()
+            self.endResetModel()
+            return True
+        return False
+
+    def prev_page(self):
+        if self.current_page > 0:
+            self.beginResetModel()
+            self.current_page -= 1
+            self.update_page()
+            self.endResetModel()
+            return True
+        return False
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._current_df)
+
+    def columnCount(self, parent=QModelIndex()):
+        return len(self._current_df.columns)
+
+    def _rebuild_invalid_cache(self):
+        self._invalid_cells = set()
+        if self._full_df.empty:
+            return
+
+        analyte_cols = [c for c in self._full_df.columns if c in self.dec_pls_dict]
+        for analyte in analyte_cols:
+            inv_col = next((c for c in self._full_df.columns if c.upper() == f"INVALID_{analyte}".upper()), None)
+            if inv_col:
+                invalid_mask = pd.to_numeric(self._full_df[inv_col], errors='coerce').fillna(0) > 0
+                for idx in self._full_df.index[invalid_mask]:
+                    self._invalid_cells.add((idx, analyte))
+
+    def _is_cell_invalid(self, row, col_name):
+        if col_name not in self.dec_pls_dict:
+            return False
+        global_idx = self._current_df.index[row]
+        return (global_idx, col_name) in self._invalid_cells
+
+    def _is_threshold_exceeded(self, col_name, val):
+        if col_name not in self._active_thresholds:
+            return False
+        if not isinstance(val, (int, float, np.floating, np.integer)):
+            return False
+        if pd.isna(val):
+            return False
+
+        threshold = self._active_thresholds[col_name]
+        if col_name.upper().startswith("O2"):
+            return val < threshold
+        else:
+            return val > threshold
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+
+        row = index.row()
+        col = index.column()
+        col_name = self._current_df.columns[col]
+
+        cell_invalid = self._is_cell_invalid(row, col_name)
+        val = self._current_df.iloc[row, col]
+
+        if role == Qt.BackgroundRole:
+            if self._show_invalid_bg and cell_invalid:
+                return INVALID_BG_COLOR
+            return None
+
+        if role == Qt.ForegroundRole:
+            if self._is_threshold_exceeded(col_name, val):
+                return THRESHOLD_EXCEEDED_COLOR
+            return None
+
+        if role != Qt.DisplayRole:
+            return None
+
+        if col_name.upper().startswith("INVALID_"):
+            return ""
+
+        if pd.isna(val):
+            return ""
+
+        if col_name in self.dec_pls_dict and isinstance(val, (int, float, np.floating, np.integer)):
+            return f"{val:.{self.dec_pls_dict[col_name]}f}"
+        elif isinstance(val, pd.Timestamp):
+            return val.strftime("%Y-%m-%d %H:%M:%S")
+        return str(val)
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole:
+            if orientation == Qt.Horizontal:
+                return str(self._current_df.columns[section])
+            else:
+                return str(section + 1 + self.current_page * self.page_size)
+        return None
+
+
+# ─────────────────────────────────────────────────────────
+# Table View Widget
+# ─────────────────────────────────────────────────────────
+class TableView(QWidget):
+    def __init__(self, analyte_dec_pls, parent=None):
+        super().__init__(parent)
+        self.analyte_dec_pls = analyte_dec_pls
+        self.model = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.table_view = QTableView()
+        self.table_view.setAlternatingRowColors(True)
+        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table_view.verticalHeader().setVisible(False)
+        layout.addWidget(self.table_view, stretch=1)
+
+        # Bottom Controls
+        bottom_layout = QHBoxLayout()
+        self.btn_export_table = QPushButton("Export CSV")
+        self.btn_prev_page = QPushButton("Previous")
+        self.lbl_page_info = QLabel("Page 0 of 0")
+        self.btn_next_page = QPushButton("Next")
+
+        bottom_layout.addWidget(self.btn_export_table)
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(self.btn_prev_page)
+        bottom_layout.addWidget(self.lbl_page_info)
+        bottom_layout.addWidget(self.btn_next_page)
+        bottom_layout.addStretch()
+
+        layout.addLayout(bottom_layout)
+
+    def set_data(self, df, show_invalid_bg=True, active_thresholds=None):
+        if self.model is None:
+            self.model = PaginatedTableModel(dec_pls_dict=self.analyte_dec_pls, page_size=100)
+            self.table_view.setModel(self.model)
+
+        self.model.set_show_invalid_bg(show_invalid_bg)
+        self.model.set_active_thresholds(active_thresholds or {})
+        self.model.set_data(df)
+        self._update_table()
+
+    def connect_signals(self, export_callback, prev_callback, next_callback):
+        self.btn_export_table.clicked.connect(export_callback)
+        self.btn_prev_page.clicked.connect(prev_callback)
+        self.btn_next_page.clicked.connect(next_callback)
+
+    def _update_table(self):
+        if self.model.total_pages > 0:
+            self.lbl_page_info.setText(f"Page {self.model.current_page + 1} of {self.model.total_pages}")
+        else:
+            self.lbl_page_info.setText("Page 0 of 0")
+
+        self.btn_prev_page.setEnabled(self.model.current_page > 0)
+        self.btn_next_page.setEnabled(self.model.current_page < self.model.total_pages - 1)
+
+        header = self.table_view.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+
+        if not hasattr(self.model, '_current_df') or self.model._current_df.empty:
+            return
+
+        cols = list(self.model._current_df.columns)
+        for i, col in enumerate(cols):
+            if col.upper().startswith("INVALID_"):
+                self.table_view.setColumnHidden(i, True)
+                continue
+            
+            self.table_view.setColumnHidden(i, False)
+            if col == 'LOG TIME':
+                self.table_view.setColumnWidth(i, 160)
+            elif col == 'DEVICE':
+                self.table_view.setColumnWidth(i, 140)
+            elif col == 'SITE':
+                self.table_view.setColumnWidth(i, 120)
+            elif col == 'observations':
+                self.table_view.setColumnWidth(i, 250) # Give observations a good width
+            elif col in self.analyte_dec_pls:
+                self.table_view.setColumnWidth(i, 80)
+            else:
+                self.table_view.setColumnWidth(i, 100)
+
+        header.setStretchLastSection(True)    

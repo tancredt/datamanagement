@@ -1,0 +1,116 @@
+{
+  "devices": [
+    {
+      "label": "AM31",
+      "serial": "W01B00000781"
+    },
+    {
+      "label": "AM32",
+      "serial": "W01B00001749"
+    },
+    {
+      "label": "AM33",
+      "serial": "W01B00001747"
+    },
+    {
+      "label": "AM34",
+      "serial": "W01B00001748"
+    },
+    {
+      "label": "AM35",
+      "serial": "W01B00001746"
+    },
+    {
+      "label": "AM36",
+      "serial": "W01B00002609"
+    },
+    {
+      "label": "AM37",
+      "serial": "W01B00002603"
+    },
+    {
+      "label": "AM39",
+      "serial": "W01B00002606"
+    },
+    {
+      "label": "AM40",
+      "serial": "W01B00002602"
+    },
+    {
+      "label": "AM41",
+      "serial": "W01B00002480"
+    },
+    {
+      "label": "AM42",
+      "serial": "W01B00002491"
+    },
+    {
+      "label": "AM43",
+      "serial": "W01B00002499"
+    },
+    {
+      "label": "AM44",
+      "serial": "W01B00002492"
+    },
+    {
+      "label": "AM45",
+      "serial": "W01B00002481"
+    },
+    {
+      "label": "AM46",
+      "serial": "W01B00002453"
+    },
+    {
+      "label": "AM47",
+      "serial": "W01B00002479"
+    },
+    {
+      "label": "AM48",
+      "serial": "W01B00002454"
+    },
+    {
+      "label": "AM49",
+      "serial": "W01B00002490"
+    },
+    {
+      "label": "AM50",
+      "serial": "W01B00002498"
+    },
+    {
+      "label": "AM51",
+      "serial": "W01B00002478"
+    },
+    {
+      "label": "AM52",
+      "serial": "W01B00002455"
+    },
+    {
+      "label": "AM53",
+      "serial": "W01B00002493"
+    },
+    {
+      "label": "AM55",
+      "serial": "W01B00002605"
+    },
+    {
+      "label": "AM56",
+      "serial": "W01B00002604"
+    },
+    {
+      "label": "AM63",
+      "serial": "W01B00002497"
+    },
+    {
+      "label": "AM64",
+      "serial": "W01B00002452"
+    },
+    {
+      "label": "AM65",
+      "serial": "W01B00002500"
+    },
+    {
+      "label": "MA54",
+      "serial": "W01B00002601"
+    }
+  ]
+}
