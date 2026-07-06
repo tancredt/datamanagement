@@ -1,1 +1,5 @@
-(empty)
+__pycache__/
+*.py#
+*.py~
+env/
+incidents/
