@@ -16,7 +16,6 @@ def read_area_data(incident_path):
     """
     file_path = os.path.join(incident_path, "data", "processed", "area_data.csv")
     if not os.path.exists(file_path):
-        logger.warning(f"Processed area data not found at {file_path}")
         return pd.DataFrame()
     try:
         df = pd.read_csv(file_path)
@@ -42,7 +41,6 @@ def read_spot_data(incident_path):
     os.makedirs(processed_dir, exist_ok=True)
 
     if not os.path.exists(json_path):
-        logger.warning(f"Spot locations JSON not found at {json_path}")
         return pd.DataFrame()
 
     try:
