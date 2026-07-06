@@ -62,59 +62,60 @@ class SummaryChartView(QWidget):
 
     def _redraw(self):
         self.summary_ax.clear()
-        
         if not self.filter_summary:
             self.summary_canvas.draw()
             return
-
+            
         group_by = self.filter_summary.get("group_by", "Device")
-        
         if not self.summary_data:
             self.summary_ax.text(0.5, 0.5, "No summary data available.",
                                  horizontalalignment='center', verticalalignment='center',
                                  transform=self.summary_ax.transAxes)
             self.summary_canvas.draw()
             return
-
+            
         metric_id = self.metric_group.checkedId()
         metric_map = {0: ('Mean', 4), 1: ('Max', 3), 2: ('Min', 2), 3: ('Count', 5)}
         metric_name, metric_idx = metric_map.get(metric_id, ('Mean', 4))
-
+        
         df = pd.DataFrame(self.summary_data, columns=['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count', 'DecPls'])
-        
         pivot_df = df.pivot(index='Group', columns='Analyte', values=metric_name)
-        
         pivot_df.plot(kind='bar', ax=self.summary_ax, alpha=0.8)
         
+        # ── DRAW THRESHOLD LINES ──
+        if metric_name != 'Count' and self.active_thresholds:
+            for analyte, threshold_val in self.active_thresholds.items():
+                if analyte in pivot_df.columns:
+                    self.summary_ax.axhline(y=threshold_val, color='red', linestyle='--', 
+                                            linewidth=1.5, alpha=0.8, label=f"{analyte} Threshold")
+                    
         # ── Adjust Y-Axis Limit ──
         max_val = 0
         if not pivot_df.empty:
-            # 1. Find the highest data value plotted
             data_max = pivot_df.max().max()
             if pd.notna(data_max) and data_max > max_val:
                 max_val = data_max
                 
-            # 2. Check if any active threshold is higher than the data
-            # (Skip this if the metric is 'Count', as thresholds are concentrations, not counts)
             if metric_name != 'Count' and self.active_thresholds:
                 for analyte, threshold_val in self.active_thresholds.items():
-                    if analyte in pivot_df.columns:
-                        if threshold_val > max_val:
-                            max_val = threshold_val
-                            
-            # 3. Set the top limit to 10% higher than the maximum value
-            if max_val > 0:
-                self.summary_ax.set_ylim(top=max_val * 1.1)
-        # ────────────────────────────────
-        
+                    if analyte in pivot_df.columns and threshold_val > max_val:
+                        max_val = threshold_val
+                        
+        if max_val > 0:
+            self.summary_ax.set_ylim(top=max_val * 1.1)
+            
+        # ── Final Formatting ──
         self.summary_ax.set_title(f"Summary {metric_name} by {group_by} and Analyte")
         self.summary_ax.set_ylabel(metric_name)
         self.summary_ax.set_xlabel(group_by)
         
-        if len(pivot_df.columns) > 5:
-            self.summary_ax.legend(title="Analyte", fontsize='small', ncol=2)
+        # Merge data legend and threshold legend
+        handles, labels = self.summary_ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        if len(by_label) > 5:
+            self.summary_ax.legend(by_label.values(), by_label.keys(), fontsize='small', ncol=2)
         else:
-            self.summary_ax.legend(title="Analyte")
+            self.summary_ax.legend(by_label.values(), by_label.keys())
             
         self.summary_figure.tight_layout()
         self.summary_canvas.draw()

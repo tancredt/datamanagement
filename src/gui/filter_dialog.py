@@ -24,7 +24,7 @@ if parent_dir not in sys.path:
 logger = logging.getLogger(__name__)
 
 DATE_FORMAT = "yyyy-MM-dd HH:mm "
-INTERVAL_OPTIONS = ["Raw ", "5 ", "15 ", "30 ", "60 ", "120 ", "240 "]
+INTERVAL_OPTIONS = ["Raw", "5", "15", "30", "60", "120", "240", "480", "1440"]
 
 class FilterGroup(QGroupBox):
     def __init__(self, title, parent=None):

@@ -578,7 +578,6 @@ class DataAnalyzerGUI(QMainWindow):
                 self.area_data,
                 self.spot_data,
                 self.spectral_data,
-                self.available_analytes
             )
             return
 
@@ -675,7 +674,6 @@ class DataAnalyzerGUI(QMainWindow):
             self.area_data,
             self.spot_data,
             self.spectral_data,
-            self.available_analytes
         )
 
         if self.data_type == "spectral":
@@ -889,7 +887,6 @@ class DataAnalyzerGUI(QMainWindow):
             self.area_data,
             self.spot_data,
             self.spectral_data,
-            self.available_analytes
         )
 
     # ─────────────────────────────────────────────────────────
