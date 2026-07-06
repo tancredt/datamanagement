@@ -299,3 +299,91 @@ def summarise_data(df):
         })
 
     return summary
+
+if __name__ == "__main__":
+    import os
+    import json
+    
+    # 1. Define the files to test
+    file1 = "/run/media/nick/USB DISK/DataLog_1776831606050.csv"
+    file2 = "/run/media/nick/USB DISK/DataLog_1777086286191.csv"
+    
+    print(f"--- Loading files: {file1}, {file2} ---")
+    dfs = []
+    for f in [file1, file2]:
+        if os.path.exists(f):
+            dfs.append(pd.read_csv(f))
+        else:
+            print(f"Warning: {f} not found in current directory.")
+            
+    if not dfs:
+        print("No data files found to test. Exiting.")
+    else:
+        # Combine the dataframes
+        df = pd.concat(dfs, ignore_index=True)
+        
+        # Ensure LOG TIME is datetime
+        if 'LOG TIME' in df.columns:
+            df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
+            
+        # 2. Dynamically determine test parameters based on loaded data
+        start_dt = df['LOG TIME'].min()
+        stop_dt = df['LOG TIME'].max()
+        
+        selected_sites = df['SITE'].dropna().unique().tolist() if 'SITE' in df.columns else []
+        selected_devices = df['DEVICE'].dropna().unique().tolist() if 'DEVICE' in df.columns else []
+        
+        # Identify analytes (exclude known metadata columns)
+        metadata_cols = {
+            'LOG TIME', 'SITE', 'DEVICE', 'Latitude', 'Longitude', 'SERIAL NUMBER', 
+            'Count', 'MODEL NAME', 'LOCATION', 'STATUS', 'BATTERY', 'TIME ZONE', 'TIME_BIN'
+        }
+        selected_analytes = [
+            c for c in df.columns 
+            if c not in metadata_cols and not str(c).upper().startswith('INVALID_')
+        ]
+        
+        print(f"Loaded {len(df)} total rows.")
+        print(f"Time range: {start_dt} to {stop_dt}")
+        print(f"Sites found: {selected_sites}")
+        print(f"Devices found: {selected_devices}")
+        print(f"Analytes found: {selected_analytes}\n")
+        
+        # 3. Filter Data
+        print("="*40)
+        print("1. FILTER DATA")
+        print("="*40)
+        filtered_df = filter_data(
+            df=df,
+            start_dt=start_dt,
+            stop_dt=stop_dt,
+            selected_sites=selected_sites,
+            selected_devices=selected_devices,
+            selected_analytes=selected_analytes,
+            only_valid=False,
+            group_by='Device',
+            data_type="area"
+        )
+        print(filtered_df.head(10))
+        print(f"Filtered Shape: {filtered_df.shape}\n")
+        
+        # 4. Aggregate Data (e.g., 60-minute intervals)
+        print("="*40)
+        print("2. AGGREGATE DATA (60-min intervals)")
+        print("="*40)
+        aggregated_df = aggregate_data(
+            df=filtered_df,
+            interval=60, 
+            group_by='Device',
+            start_dt=start_dt,
+            stop_dt=stop_dt
+        )
+        print(aggregated_df.head(10))
+        print(f"Aggregated Shape: {aggregated_df.shape}\n")
+        
+        # 5. Summarise Data
+        print("="*40)
+        print("3. SUMMARISE DATA")
+        print("="*40)
+        summary = summarise_data(aggregated_df)
+        print(json.dumps(summary, indent=2))

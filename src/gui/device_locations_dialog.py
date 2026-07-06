@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDateTime, QSize, QThread, Signal
 from PySide6.QtGui import QPixmap, QPainter, QPen, QFont, QColor
 from gps_analysis_dialog import GPSAnalysisDialog
-from device_combo import DeviceComboBox
+from datamanagement.choices import get_available_devices
 
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
@@ -88,7 +88,9 @@ class AddDeviceLocationDialog(QDialog):
         self.cmb_labels.setPlaceholderText("Select location...")
         form.addRow("Location (Marker Label) *: ", self.cmb_labels)
         
-        self.cmb_device = DeviceComboBox(incident_path=self.incident_path)
+        self.cmb_device = QComboBox()
+        self.cmb_device.setEditable(True)
+        self.cmb_device.addItems(get_available_devices(self.incident_path, data_type="area"))
         form.addRow("Device *: ", self.cmb_device)
         
         self.dt_start = QDateTimeEdit()

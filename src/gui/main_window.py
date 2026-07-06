@@ -1,5 +1,14 @@
 import os
 import sys
+
+# ─────────────────────────────────────────────────────────
+# CRITICAL: Add parent directory to sys.path BEFORE local imports
+# ─────────────────────────────────────────────────────────
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 import glob
 import json
 import logging
@@ -34,23 +43,18 @@ from summary_map_view import SummaryMapView
 
 # Filter dialog and logic
 from filter_dialog import FilterDialog
-from datamanagement.filtering import filter_data
+from datamanagement.filtering import filter_data, aggregate_data
 
 # Importer workers
-from datamanagement.importer import (
-    copy_files_to_realtime,
-    process_realtime_data,
-    update_site_from_device_log,
-    update_validations
-)
+from datamanagement.importer import copy_files_to_realtime, import_area_data
+from datamanagement.updater import update_site_from_device_log, update_validations
+
+# Reader and Locations
+from datamanagement.reader import read_area_data, read_spot_data, read_spectral_data
+from datamanagement.locations import LocationManager
 
 # Import shared metadata helpers
-from device_combo import get_available_devices, get_available_locations
-
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+from datamanagement.choices import get_available_devices, get_available_locations
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +91,7 @@ class ProcessWorker(QObject):
     @Slot()
     def do_work(self):
         try:
-            result = process_realtime_data(self.incident_path)
+            result = import_area_data(self.incident_path)
             if result:
                 update_site_from_device_log(self.incident_path)
                 update_validations(self.incident_path)
@@ -133,7 +137,7 @@ class DataAnalyzerGUI(QMainWindow):
 
         self.area_data = None
         self.spot_data = None
-        self.spectral_data = None  # NEW: Track spectral data for overview
+        self.spectral_data = None
 
         self._views_initialized = False
         self._last_data_type = None
@@ -159,13 +163,12 @@ class DataAnalyzerGUI(QMainWindow):
         if data is not None:
             self._load_analytes_config()
             self._load_overview_data()
-            self._load_spectral_data_for_overview()  # NEW
+            self._load_spectral_data_for_overview()
 
             if not self._views_initialized:
                 self._initialize_data_views()
                 self._views_initialized = True
 
-            # UPDATED: Always pass all three data sources to overview
             self.overview_view.update_data(
                 self.area_data,
                 self.spot_data,
@@ -408,12 +411,12 @@ class DataAnalyzerGUI(QMainWindow):
         # Handle dock navigation buttons for Spectral
         is_spectral = (self.data_type == "spectral")
         for idx, btn in self.nav_btns.items():
-            if idx in [0, 1]:  # Overview and Table
+            if idx in [0, 1]:
                 btn.setEnabled(True)
             else:
                 btn.setEnabled(not is_spectral)
                 if is_spectral and btn.isChecked():
-                    self.nav_btns[0].setChecked(True)  # Force Overview
+                    self.nav_btns[0].setChecked(True)
 
         progress = QProgressDialog("Loading data...", None, 0, 0, self)
         progress.setWindowTitle("Loading")
@@ -438,7 +441,6 @@ class DataAnalyzerGUI(QMainWindow):
                 self._load_map_data()
             QApplication.processEvents()
 
-            # Rebuild views if switching to/from spectral
             if not self._views_initialized or self._last_data_type != self.data_type:
                 self._initialize_data_views()
                 self._views_initialized = True
@@ -501,173 +503,29 @@ class DataAnalyzerGUI(QMainWindow):
                 logger.error(f"Failed to load thresholds: {e}")
 
     def _load_spot_data(self):
-        data_file = os.path.join(self.active_incident_path, "mapping", "spot_locations.json")
-        if os.path.exists(data_file):
-            try:
-                with open(data_file, 'r', encoding='utf-8') as f:
-                    spot_json = json.load(f)
-                self.raw_data = self._convert_spot_to_df(spot_json)
-                self._extract_metadata_from_df()
-            except Exception as e:
-                logger.error(f"Failed to load spot data: {e}")
-                self.raw_data = pd.DataFrame()
-        else:
-            self.raw_data = pd.DataFrame()
+        self.raw_data = read_spot_data(self.active_incident_path)
+        self._extract_metadata_from_df()
 
     def _load_area_data(self):
-        data_file = os.path.join(self.active_incident_path, "data", "processed", "area_data.csv")
-        if os.path.exists(data_file):
-            try:
-                self.raw_data = pd.read_csv(data_file, low_memory=False)
-                self.raw_data['LOG TIME'] = pd.to_datetime(self.raw_data['LOG TIME'], errors='coerce')
-                self._extract_metadata_from_df()
-            except Exception as e:
-                logger.error(f"Failed to load area data: {e}")
-                self.raw_data = pd.DataFrame()
-        else:
-            self.raw_data = pd.DataFrame()
+        self.raw_data = read_area_data(self.active_incident_path)
+        self._extract_metadata_from_df()
 
     def _load_spectral_data(self):
-        data_file = os.path.join(self.active_incident_path, "mapping", "spectral_locations.json")
-        if os.path.exists(data_file):
-            try:
-                with open(data_file, 'r', encoding='utf-8') as f:
-                    spectral_json = json.load(f)
-                self.raw_data = self._convert_spectral_to_df(spectral_json)
-                self._extract_spectral_metadata(spectral_json)
-            except Exception as e:
-                logger.error(f"Failed to load spectral data: {e}")
-                self.raw_data = pd.DataFrame()
-                self.available_locations = []
-                self.available_devices = []
-        else:
-            self.raw_data = pd.DataFrame()
-            self.available_locations = []
-            self.available_devices = []
-
-    def _convert_spectral_to_df(self, spectral_data):
-        rows = []
-        for loc in spectral_data.get("maps", {}).get("locations", []):
-            for marker in loc.get("markers", []):
-                label = marker.get("label", "")
-                site = label if label else "Unassigned"
-                for r in marker.get("readings", []):
-                    clean_r = {k.strip(): v for k, v in r.items()}
-                    row = {
-                        "LOG TIME": clean_r.get("datetime"),
-                        "DEVICE": clean_r.get("device", ""),
-                        "SITE": site,
-                        "chemicals_identified": clean_r.get("chemicals_identified", ""),
-                        "comments": clean_r.get("comments", ""),
-                        "file_ref": clean_r.get("file_ref", "")
-                    }
-                    rows.append(row)
-        df = pd.DataFrame(rows)
-        if not df.empty:
-            df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-        return df
-
-    def _extract_spectral_metadata(self, spectral_json):
-        locations = set()
-        devices = set()
-        for loc in spectral_json.get("maps", {}).get("locations", []):
-            for marker in loc.get("markers", []):
-                label = marker.get("label", "")
-                if label:
-                    locations.add(label)
-                for r in marker.get("readings", []):
-                    dev = r.get("device", "")
-                    if dev:
-                        devices.add(dev)
-        self.available_locations = sorted(list(locations))
-        self.available_devices = sorted(list(devices))
+        self.raw_data = read_spectral_data(self.active_incident_path)
+        self._extract_metadata_from_df()
 
     def _load_overview_data(self):
-        """Loads area and spot data for the overview view."""
-        area_file = os.path.join(self.active_incident_path, "data", "processed", "area_data.csv")
-        if os.path.exists(area_file):
-            try:
-                self.area_data = pd.read_csv(area_file, low_memory=False)
-                self.area_data['LOG TIME'] = pd.to_datetime(self.area_data['LOG TIME'], errors='coerce')
-            except Exception as e:
-                logger.error(f"Failed to load area data for overview: {e}")
-                self.area_data = pd.DataFrame()
-        else:
-            self.area_data = pd.DataFrame()
-
-        spot_file = os.path.join(self.active_incident_path, "mapping", "spot_locations.json")
-        if os.path.exists(spot_file):
-            try:
-                with open(spot_file, 'r', encoding='utf-8') as f:
-                    spot_json = json.load(f)
-                self.spot_data = self._convert_spot_to_df(spot_json)
-            except Exception as e:
-                logger.error(f"Failed to load spot data for overview: {e}")
-                self.spot_data = pd.DataFrame()
-        else:
-            self.spot_data = pd.DataFrame()
+        self.area_data = read_area_data(self.active_incident_path)
+        self.spot_data = read_spot_data(self.active_incident_path)
 
     def _load_spectral_data_for_overview(self):
-        """Loads spectral data specifically for the Overview view."""
-        spectral_file = os.path.join(self.active_incident_path, "mapping", "spectral_locations.json")
-        if os.path.exists(spectral_file):
-            try:
-                with open(spectral_file, 'r', encoding='utf-8') as f:
-                    spectral_json = json.load(f)
-                self.spectral_data = self._convert_spectral_to_df(spectral_json)
-            except Exception as e:
-                logger.error(f"Failed to load spectral data for overview: {e}")
-                self.spectral_data = pd.DataFrame()
-        else:
-            self.spectral_data = pd.DataFrame()
+        self.spectral_data = read_spectral_data(self.active_incident_path)
 
     def _load_map_data(self):
         self.mapping_dir = os.path.join(self.active_incident_path, "mapping")
-        json_file = os.path.join(self.mapping_dir, f"{self.data_type}_locations.json")
-        self.maps_data = {}
-        self.map_filenames = []
-
-        if os.path.exists(json_file):
-            try:
-                with open(json_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                for loc in data.get("maps", {}).get("locations", []):
-                    fname = loc.get("filename")
-                    if fname:
-                        self.maps_data[fname] = loc.get("markers", [])
-                        self.map_filenames.append(fname)
-            except Exception as e:
-                logger.error(f"Failed to load map data: {e}")
-
-    def _convert_spot_to_df(self, spot_data):
-        rows = []
-        maps_dict = spot_data.get("maps", {})
-        locations_list = maps_dict.get("locations", [])
-
-        for loc in locations_list:
-            markers = loc.get("markers", [])
-            for marker in markers:
-                label = marker.get("label", "")
-                site = label if label else "Unassigned"
-                readings = marker.get("readings", [])
-                for r in readings:
-                    clean_r = {k.strip(): v for k, v in r.items()}
-                    row = {
-                        "LOG TIME": clean_r.get("datetime"),
-                        "DEVICE": clean_r.get("device", ""),
-                        "SITE": site,
-                        "observations": clean_r.get("observations", ""),
-                        "Latitude": np.nan,
-                        "Longitude": np.nan
-                    }
-                    for analyte in self.available_analytes:
-                        row[analyte] = clean_r.get(analyte)
-                        row[f"INVALID_{analyte}"] = 0
-                    rows.append(row)
-        df = pd.DataFrame(rows)
-        if not df.empty:
-            df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-        return df
+        manager = LocationManager(self.active_incident_path, mode=self.data_type)
+        self.maps_data = manager.get_maps_data()
+        self.map_filenames = list(self.maps_data.keys())
 
     def _extract_metadata_from_df(self):
         self.available_locations = get_available_locations(self.active_incident_path, self.data_type)
@@ -679,7 +537,6 @@ class DataAnalyzerGUI(QMainWindow):
             self.view_stack.removeWidget(w)
             w.deleteLater()
 
-        # Always initialize the standard 6 views
         self.overview_view = OverviewView(analyte_dec_pls=self.analyte_dec_pls, parent=self)
         self.table_view = TableView(analyte_dec_pls=self.analyte_dec_pls, parent=self)
         self.chart_view = ChartView(parent=self)
@@ -715,7 +572,6 @@ class DataAnalyzerGUI(QMainWindow):
 
     def _apply_initial_filters(self):
         if self.raw_data is None or self.raw_data.empty:
-            # UPDATED: Even if current data is empty, still update overview with all sources
             self._load_overview_data()
             self._load_spectral_data_for_overview()
             self.overview_view.update_data(
@@ -728,7 +584,6 @@ class DataAnalyzerGUI(QMainWindow):
 
         df = self.raw_data.copy()
 
-        # Calculate data bounds
         if 'LOG TIME' in df.columns and not df['LOG TIME'].dropna().empty:
             data_start = df['LOG TIME'].min()
             data_stop = df['LOG TIME'].max()
@@ -736,7 +591,6 @@ class DataAnalyzerGUI(QMainWindow):
             data_start = pd.Timestamp.now()
             data_stop = pd.Timestamp.now()
 
-        # If filter_summary is empty (first load), initialize with data bounds
         if not self.filter_summary:
             self.filter_summary = {
                 "start_time": data_start,
@@ -750,7 +604,6 @@ class DataAnalyzerGUI(QMainWindow):
                 "threshold_level": None
             }
         else:
-            # Preserve user's previously set times when switching data types
             old_sites = self.filter_summary.get('selected_sites', [])
             valid_sites = [s for s in old_sites if s in self.available_locations or s == 'Unassigned']
             self.filter_summary['selected_sites'] = valid_sites if valid_sites else (["Unassigned"] + list(self.available_locations))
@@ -763,7 +616,6 @@ class DataAnalyzerGUI(QMainWindow):
             valid_analytes = [g for g in old_analytes if g in self.available_analytes]
             self.filter_summary['selected_analytes'] = valid_analytes if valid_analytes else list(self.available_analytes)
 
-        # Save to data type specific storage
         if self.data_type == "spot":
             self.spot_filters = self.filter_summary.copy()
             self._spot_threshold_level = self._selected_threshold_level
@@ -774,61 +626,51 @@ class DataAnalyzerGUI(QMainWindow):
             self.spectral_filters = self.filter_summary.copy()
             self._spectral_threshold_level = self._selected_threshold_level
 
-        # Custom filtering logic for Spectral to avoid analyte crashes
-        if self.data_type == "spectral":
-            mask = pd.Series([True] * len(df))
-            if 'LOG TIME' in df.columns:
-                mask &= (df['LOG TIME'] >= self.filter_summary['start_time'])
-                mask &= (df['LOG TIME'] <= self.filter_summary['stop_time'])
-            if 'SITE' in df.columns:
-                mask &= df['SITE'].isin(self.filter_summary['selected_sites'])
-            if 'DEVICE' in df.columns:
-                mask &= df['DEVICE'].isin(self.filter_summary['selected_devices'])
-            self.filtered_data = df[mask].copy()
-            if not self.filtered_data.empty and 'LOG TIME' in self.filtered_data.columns:
-                self.filtered_data = self.filtered_data.sort_values(by='LOG TIME')
-            self._update_all_views()
-            self._update_filter_summary_labels()
-            return
-
         self.filtered_data = filter_data(
-            self.raw_data,
-            self.filter_summary['start_time'],
-            self.filter_summary['stop_time'],
-            self.filter_summary['interval'],
-            self.filter_summary['selected_sites'],
-            self.filter_summary['selected_analytes'],
-            self.filter_summary['selected_devices'],
-            self.filter_summary['only_valid'],
-            self.filter_summary['group_by']
+            df=self.raw_data,
+            start_dt=self.filter_summary['start_time'],
+            stop_dt=self.filter_summary['stop_time'],
+            selected_sites=self.filter_summary['selected_sites'],
+            selected_devices=self.filter_summary['selected_devices'],
+            selected_analytes=self.filter_summary['selected_analytes'],
+            only_valid=self.filter_summary['only_valid'],
+            group_by=self.filter_summary['group_by'],
+            data_type=self.data_type
         )
 
         if self.filtered_data is not None and not self.filtered_data.empty:
             if 'LOG TIME' in self.filtered_data.columns:
                 self.filtered_data = self.filtered_data.sort_values(by='LOG TIME')
+            
             interval = self.filter_summary.get("interval", "Raw")
             group_by = self.filter_summary.get("group_by", "Device")
+            
             if interval != "Raw":
+                start = self.filter_summary['start_time']
+                stop = self.filter_summary['stop_time']
+                self.filtered_data = aggregate_data(
+                    df=self.filtered_data, 
+                    interval=interval, 
+                    group_by=group_by, 
+                    start_dt=start, 
+                    stop_dt=stop
+                )
                 if group_by == "Device" and "SITE" in self.filtered_data.columns:
                     self.filtered_data = self.filtered_data.drop(columns=["SITE"])
                 elif group_by == "Site" and "DEVICE" in self.filtered_data.columns:
                     self.filtered_data = self.filtered_data.drop(columns=["DEVICE"])
+                    
             self.filtered_data = self._reorder_columns(self.filtered_data)
 
         self._update_all_views()
 
-    # ─────────────────────────────────────────────────────────
-    # UPDATED: _update_all_views - Always shows all three accordions in Overview
-    # ─────────────────────────────────────────────────────────
     def _update_all_views(self):
         if self.filtered_data is None:
             return
 
-        # ── Always load all three data sources for the Overview ──
         self._load_overview_data()
         self._load_spectral_data_for_overview()
 
-        # ── Overview always shows ALL accordions regardless of data type ──
         self.overview_view.update_data(
             self.area_data,
             self.spot_data,
@@ -836,13 +678,11 @@ class DataAnalyzerGUI(QMainWindow):
             self.available_analytes
         )
 
-        # ── Handle Spectral-specific views (Table only) ──
         if self.data_type == "spectral":
             self.table_view.set_data(self.filtered_data, show_invalid_bg=False, active_thresholds={})
             self._update_filter_summary_labels()
             return
 
-        # ── Handle Spot / Area Views ──
         only_valid = self.filter_summary.get("only_valid", False)
         active_thresholds = self._get_active_thresholds()
         self.table_view.set_data(self.filtered_data, show_invalid_bg=not only_valid, active_thresholds=active_thresholds)
@@ -909,42 +749,41 @@ class DataAnalyzerGUI(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             new_filters = dialog.get_filters()
 
-            if self.data_type == "spectral":
-                df = self.raw_data.copy()
-                mask = pd.Series([True] * len(df))
-                if 'LOG TIME' in df.columns:
-                    mask &= (df['LOG TIME'] >= new_filters['start_time'])
-                    mask &= (df['LOG TIME'] <= new_filters['stop_time'])
-                if 'SITE' in df.columns:
-                    mask &= df['SITE'].isin(new_filters['selected_sites'])
-                if 'DEVICE' in df.columns:
-                    mask &= df['DEVICE'].isin(new_filters['selected_devices'])
-                self.filtered_data = df[mask].copy()
-                if not self.filtered_data.empty and 'LOG TIME' in self.filtered_data.columns:
+            self.filtered_data = filter_data(
+                df=self.raw_data,
+                start_dt=new_filters['start_time'],
+                stop_dt=new_filters['stop_time'],
+                selected_sites=new_filters['selected_sites'],
+                selected_devices=new_filters['selected_devices'],
+                selected_analytes=new_filters['selected_analytes'],
+                only_valid=new_filters['only_valid'],
+                group_by=new_filters['group_by'],
+                data_type=self.data_type
+            )
+
+            if self.filtered_data is not None and not self.filtered_data.empty:
+                if 'LOG TIME' in self.filtered_data.columns:
                     self.filtered_data = self.filtered_data.sort_values(by='LOG TIME')
-            else:
-                self.filtered_data = filter_data(
-                    self.raw_data,
-                    new_filters['start_time'],
-                    new_filters['stop_time'],
-                    new_filters['interval'],
-                    new_filters['selected_sites'],
-                    new_filters['selected_analytes'],
-                    new_filters['selected_devices'],
-                    new_filters['only_valid'],
-                    new_filters['group_by']
-                )
-                if self.filtered_data is not None and not self.filtered_data.empty:
-                    if 'LOG TIME' in self.filtered_data.columns:
-                        self.filtered_data = self.filtered_data.sort_values(by='LOG TIME')
-                    interval = self.filter_summary.get("interval", "Raw")
-                    group_by = self.filter_summary.get("group_by", "Device")
-                    if interval != "Raw":
-                        if group_by == "Device" and "SITE" in self.filtered_data.columns:
-                            self.filtered_data = self.filtered_data.drop(columns=["SITE"])
-                        elif group_by == "Site" and "DEVICE" in self.filtered_data.columns:
-                            self.filtered_data = self.filtered_data.drop(columns=["DEVICE"])
-                    self.filtered_data = self._reorder_columns(self.filtered_data)
+                
+                interval = new_filters.get("interval", "Raw")
+                group_by = new_filters.get("group_by", "Device")
+                
+                if interval != "Raw":
+                    start = new_filters['start_time']
+                    stop = new_filters['stop_time']
+                    self.filtered_data = aggregate_data(
+                        df=self.filtered_data, 
+                        interval=interval, 
+                        group_by=group_by, 
+                        start_dt=start, 
+                        stop_dt=stop
+                    )
+                    if group_by == "Device" and "SITE" in self.filtered_data.columns:
+                        self.filtered_data = self.filtered_data.drop(columns=["SITE"])
+                    elif group_by == "Site" and "DEVICE" in self.filtered_data.columns:
+                        self.filtered_data = self.filtered_data.drop(columns=["DEVICE"])
+                        
+                self.filtered_data = self._reorder_columns(self.filtered_data)
 
             self._selected_threshold_level = new_filters['threshold_level']
             self.thresholds_lookup = dialog.thresholds_lookup
@@ -1037,9 +876,6 @@ class DataAnalyzerGUI(QMainWindow):
         if hasattr(self, 'summary_map_view'):
             self.summary_map_view.export_map()
 
-    # ─────────────────────────────────────────────────────────
-    # UPDATED: _refresh_overview - Always loads all three data sources
-    # ─────────────────────────────────────────────────────────
     def _refresh_overview(self):
         if not self.active_incident_path:
             return
@@ -1047,7 +883,6 @@ class DataAnalyzerGUI(QMainWindow):
             return
 
         self._load_analytes_config()
-        # Always reload all three data sources
         self._load_overview_data()
         self._load_spectral_data_for_overview()
         self.overview_view.update_data(
@@ -1058,7 +893,7 @@ class DataAnalyzerGUI(QMainWindow):
         )
 
     # ─────────────────────────────────────────────────────────
-    # EXISTING & NEW MENU ACTIONS
+    # MENU ACTIONS
     # ─────────────────────────────────────────────────────────
     def _launch_objective_dialog(self, zone_name):
         if not self.active_incident_path:

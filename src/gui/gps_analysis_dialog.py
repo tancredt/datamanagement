@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QMessageBox, QComboBox, QPushButton
 )
 from PySide6.QtCore import Qt
-from device_combo import DeviceComboBox
+from datamanagement.choices import get_available_devices
 
 class GPSAnalysisDialog(QDialog):
     def __init__(self, parent=None, incident_path=None):
@@ -37,7 +37,9 @@ class GPSAnalysisDialog(QDialog):
         
         ctrl_layout = QHBoxLayout()
         ctrl_layout.addWidget(QLabel("<b>Select Device:</b>"))
-        self.cmb_device = DeviceComboBox(incident_path=self.incident_path)
+        self.cmb_device = QComboBox()
+        self.cmb_device.setEditable(True)
+        self.cmb_device.addItems(get_available_devices(self.incident_path, data_type="area"))
         ctrl_layout.addWidget(self.cmb_device)
         
         self.btn_analyze = QPushButton("Analyze")

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDateTime
 
 # Import shared metadata helpers
-from device_combo import get_available_devices, get_available_locations
+from datamanagement.choices import get_available_devices, get_available_locations
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)

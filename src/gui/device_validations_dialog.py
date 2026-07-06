@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QProgressDialog, QLabel, QScrollArea, QWidget
 )
 from PySide6.QtCore import Qt, QDateTime, QThread, Signal
-from device_combo import DeviceComboBox
+from datamanagement.choices import get_available_devices
 
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
@@ -87,7 +87,9 @@ class AddDeviceValidationDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(8)
         form.setLabelAlignment(Qt.AlignRight)
-        self.cmb_device = DeviceComboBox(incident_path=self.incident_path)
+        self.cmb_device = QComboBox()
+        self.cmb_device.setEditable(True)
+        self.cmb_device.addItems(get_available_devices(self.incident_path, data_type="area"))
         form.addRow("Device *: ", self.cmb_device)
         
         self.analyte_selector = AnalyteSelectionWidget(self._load_available_analytes())

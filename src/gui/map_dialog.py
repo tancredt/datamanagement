@@ -1,25 +1,25 @@
 import os
 import re
-import json
-import shutil
 import logging
 from PySide6.QtWidgets import (
-QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog,
-QScrollArea, QLabel, QMessageBox, QWidget, QSizePolicy, QMenu,
-QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit, QRadioButton,
-QButtonGroup, QStackedWidget, QComboBox
+    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog,
+    QScrollArea, QLabel, QMessageBox, QWidget, QSizePolicy, QMenu,
+    QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit, QRadioButton,
+    QButtonGroup, QStackedWidget, QComboBox
 )
 from PySide6.QtGui import QPixmap, QPainter, QPen, QFont, QColor, QDoubleValidator, QDesktopServices
 from PySide6.QtCore import Qt, Signal, QUrl
+from datamanagement.locations import LocationManager, get_next_label_index, index_to_label
+
 logger = logging.getLogger(__name__)
 
 class MarkerInfoDialog(QDialog):
     """Dialog for marker metadata. Label must be globally unique across all maps and data types."""
-    def __init__(self, parent=None, default_label=" ", edit_data=None, current_map_labels=None):
+    def __init__(self, parent=None, default_label="", edit_data=None, current_map_labels=None):
         super().__init__(parent)
         self.is_edit = edit_data is not None
         self.current_map_labels = current_map_labels or set()
-        self._original_label = edit_data.get("label", " ") if self.is_edit else None
+        self._original_label = edit_data.get("label", "") if self.is_edit else None
 
         self.setWindowTitle("Edit Marker" if self.is_edit else "Place Marker")
         self.setMinimumWidth(420)
@@ -32,29 +32,33 @@ class MarkerInfoDialog(QDialog):
     def _setup_ui(self, default_label):
         layout = QVBoxLayout(self)
         form = QFormLayout()
+        
         self.lbl_label = QLineEdit(default_label)
         self.lbl_label.setPlaceholderText("A-Z, numbers, underscores only")
         if self.is_edit:
             self.lbl_label.setReadOnly(True)
             self.lbl_label.setStyleSheet("background-color: #f0f0f0; color: #555;")
+            
         self.txt_desc = QTextEdit()
         self.txt_desc.setMaximumHeight(60)
         self.txt_desc.setPlaceholderText("Optional description...")
+        
         form.addRow("Label:", self.lbl_label)
         form.addRow("Description:", self.txt_desc)
+        
         self.coord_group = QButtonGroup(self)
         self.rb_geo = QRadioButton("geo: URI")
         self.rb_latlon = QRadioButton("Latitude / Longitude")
         self.rb_geo.setChecked(True)
         self.coord_group.addButton(self.rb_geo, 0)
         self.coord_group.addButton(self.rb_latlon, 1)
+        
         radio_layout = QHBoxLayout()
         radio_layout.addWidget(self.rb_geo)
         radio_layout.addWidget(self.rb_latlon)
         form.addRow("Coordinates:", radio_layout)
-        self.stack = QStackedWidget()
         
-        # Page 0: geo URI
+        self.stack = QStackedWidget()
         page_geo = QWidget()
         geo_layout = QHBoxLayout(page_geo)
         geo_layout.setContentsMargins(0, 0, 0, 0)
@@ -63,7 +67,6 @@ class MarkerInfoDialog(QDialog):
         geo_layout.addWidget(self.txt_geo)
         self.stack.addWidget(page_geo)
         
-        # Page 1: Lat/Lon
         page_latlon = QWidget()
         latlon_layout = QHBoxLayout(page_latlon)
         latlon_layout.setContentsMargins(0, 0, 0, 0)
@@ -78,8 +81,10 @@ class MarkerInfoDialog(QDialog):
         latlon_layout.addWidget(QLabel("Lon:"))
         latlon_layout.addWidget(self.txt_lon)
         self.stack.addWidget(page_latlon)
+        
         form.addRow("", self.stack)
         layout.addLayout(form)
+        
         self.btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         layout.addWidget(self.btn_box)
         self.btn_box.accepted.connect(self._validate_and_accept)
@@ -112,12 +117,10 @@ class MarkerInfoDialog(QDialog):
         if not re.match(r'^[A-Za-z0-9_]+$', new_label):
             QMessageBox.warning(self, "Validation Error", "Label must contain only letters, numbers, and underscores.")
             return
-        
-        # Enforce global uniqueness across all maps and data types
         if not self.is_edit and new_label in self.current_map_labels:
             QMessageBox.warning(self, "Duplicate Label", "This label has already been used globally across all maps and data types.")
             return
-
+            
         mode = self.coord_group.checkedId()
         self._lat, self._lon = None, None
         try:
@@ -131,6 +134,7 @@ class MarkerInfoDialog(QDialog):
                 lat_s, lon_s = self.txt_lat.text().strip(), self.txt_lon.text().strip()
                 if lat_s or lon_s:
                     self._lat, self._lon = float(lat_s), float(lon_s)
+                    
             if self._lat is not None and not (-90 <= self._lat <= 90):
                 raise ValueError("Latitude must be between -90 and 90.")
             if self._lon is not None and not (-180 <= self._lon <= 180):
@@ -145,21 +149,14 @@ class MarkerInfoDialog(QDialog):
         data = {
             "label": self.lbl_label.text().strip(),
             "description": self.txt_desc.toPlainText().strip(),
-            "coordinates": {
-                "latitude": self._lat,
-                "longitude": self._lon
-            }
+            "coordinates": {"latitude": self._lat, "longitude": self._lon}
         }
         if existing_data:
-            if "readings" in existing_data:
-                data["readings"] = existing_data["readings"]
-            if "device_log" in existing_data:
-                data["device_log"] = existing_data["device_log"]
+            if "readings" in existing_data: data["readings"] = existing_data["readings"]
+            if "device_log" in existing_data: data["device_log"] = existing_data["device_log"]
         else:
-            if mode in ("spot", "spectral", "spectrall"):
-                data["readings"] = []
-            elif mode == "area":
-                data["device_log"] = []
+            if mode in ("spot", "spectral"): data["readings"] = []
+            elif mode == "area": data["device_log"] = []
         return data
 
 class MapCanvas(QWidget):
@@ -185,27 +182,6 @@ class MapCanvas(QWidget):
         if self.pixmap and not self.pixmap.isNull():
             self.setFixedSize(pixmap.size())
             self.update()
-
-    def get_next_label_index(self, all_labels):
-        """Calculates the next alphabetical index based on a global set of labels."""
-        max_idx = -1
-        for label in all_labels:
-            label_upper = label.strip().upper()
-            if not label_upper.isalpha(): continue
-            idx = 0
-            for char in label_upper:
-                idx = idx * 26 + (ord(char) - 64)
-            idx -= 1
-            if idx > max_idx: max_idx = idx
-        return max_idx + 1
-
-    def _index_to_label(self, idx):
-        idx += 1
-        result = []
-        while idx > 0:
-            idx, rem = divmod(idx - 1, 26)
-            result.append(chr(65 + rem))
-        return ''.join(reversed(result))
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -288,28 +264,36 @@ class MapEditorDialog(QDialog):
         self.incident_path = incident_path
         self.mode = mode
         self.mapping_dir = os.path.join(incident_path, "mapping") if incident_path else None
-        self.json_file = os.path.join(self.mapping_dir, f"{mode}_locations.json") if self.mapping_dir else None
-        self.maps_data = {}
+        
+        # Use LocationManager for all JSON operations
+        self.manager = LocationManager(incident_path, mode=mode)
+        self.manager.ensure_structure()
+        self.maps_data = self.manager.get_maps_data()
         self.current_map_file = None
+        
         self.setWindowTitle(f"Map Editor - {mode.title()} Locations")
         self.resize(900, 700)
         self._setup_ui()
-        self._load_all_data()
+        self._populate_maps_combo()
         self._connect_signals()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         top_toolbar = QHBoxLayout()
+        
         self.combo_maps = QComboBox()
         self.combo_maps.setMinimumWidth(200)
         self.combo_maps.currentTextChanged.connect(self._on_map_selected)
+        
         self.btn_create_map = QPushButton("Create Map")
         self.btn_create_map.setToolTip("Open OpenStreetMap in your browser to create a new map")
         self.btn_create_map.clicked.connect(self._open_create_map_url)
+        
         self.btn_add_map = QPushButton("Add Map to Project...")
-        self.btn_place = QPushButton("Place Marker...")
         self.btn_export_map = QPushButton("Export Map...")
         self.btn_export_map.clicked.connect(self._on_export_map)
+        self.btn_place = QPushButton("Place Marker...")
+        
         top_toolbar.addWidget(QLabel("Active Map:"))
         top_toolbar.addWidget(self.combo_maps)
         top_toolbar.addWidget(self.btn_create_map)
@@ -318,12 +302,14 @@ class MapEditorDialog(QDialog):
         top_toolbar.addStretch()
         top_toolbar.addWidget(self.btn_place)
         layout.addLayout(top_toolbar)
+        
         scroll = QScrollArea()
         scroll.setWidgetResizable(False)
         scroll.setAlignment(Qt.AlignCenter)
         self.canvas = MapCanvas()
         scroll.setWidget(self.canvas)
         layout.addWidget(scroll)
+        
         self.btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
         layout.addWidget(self.btn_box)
 
@@ -341,64 +327,15 @@ class MapEditorDialog(QDialog):
         )
         QMessageBox.information(self, "How to Create a Map", instructions)
 
-    def _get_all_used_labels(self):
-        """Gathers all used labels globally across all maps and all data types."""
-        used_labels = set()
-        
-        # 1. Current data type (all maps)
-        for fname, markers in self.maps_data.items():
-            for m in markers:
-                lbl = m.get("label")
-                if lbl: used_labels.add(lbl)
-                
-        # 2. Other data types (spot, area, spectral)
-        if self.mapping_dir and os.path.exists(self.mapping_dir):
-            for mode in ["spot", "area", "spectral"]:
-                if mode == self.mode:
-                    continue
-                json_file = os.path.join(self.mapping_dir, f"{mode}_locations.json")
-                if os.path.exists(json_file):
-                    try:
-                        with open(json_file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                        for loc in data.get("maps", {}).get("locations", []):
-                            for m in loc.get("markers", []):
-                                lbl = m.get("label")
-                                if lbl: used_labels.add(lbl)
-                    except Exception as e:
-                        logger.error(f"Failed to load global labels from {json_file}: {e}")
-        return used_labels
-
-    def _load_all_data(self):
-        if not self.mapping_dir or not os.path.exists(self.mapping_dir):
-            os.makedirs(self.mapping_dir, exist_ok=True)
-            return
-        if os.path.exists(self.json_file):
-            try:
-                with open(self.json_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                maps_dict = data.get("maps", {})
-                locations_list = maps_dict.get("locations", [])
-                self.maps_data = {}
-                for loc in locations_list:
-                    fname = loc.get("filename")
-                    markers = loc.get("markers", [])
-                    if fname:
-                        self.maps_data[fname] = markers
-                required_key = "device_log" if self.mode == "area" else "readings"
-                for fname, markers in self.maps_data.items():
-                    for marker in markers:
-                        if required_key not in marker:
-                            marker[required_key] = []
-            except Exception as e:
-                logger.error("Failed to load %s: %s", self.json_file, e)
-                self.maps_data = {}
+    def _populate_maps_combo(self):
+        self.combo_maps.clear()
         for fname in sorted(self.maps_data.keys()):
             fpath = os.path.join(self.mapping_dir, fname)
             if os.path.exists(fpath):
                 self.combo_maps.addItem(fname)
             else:
                 del self.maps_data[fname]
+        
         if self.combo_maps.count() > 0:
             self.combo_maps.setCurrentIndex(0)
         else:
@@ -412,8 +349,10 @@ class MapEditorDialog(QDialog):
             self.canvas.markers = []
             self.canvas.update()
             return
+        
         if self.current_map_file and self.current_map_file in self.maps_data:
             self.maps_data[self.current_map_file] = list(self.canvas.markers)
+            
         self.current_map_file = filename
         self.canvas.markers = list(self.maps_data.get(filename, []))
         pixmap_path = os.path.join(self.mapping_dir, filename)
@@ -432,30 +371,20 @@ class MapEditorDialog(QDialog):
         if not self.current_map_file:
             QMessageBox.warning(self, "No Map", "Please add and select a map first.")
             return
-            
-        all_used_labels = self._get_all_used_labels()
-        next_label = self.canvas._index_to_label(
-            self.canvas.get_next_label_index(all_used_labels)
-        )
         
-        dialog = MarkerInfoDialog(
-            self,
-            default_label=next_label,
-            current_map_labels=all_used_labels
-        )
+        all_used_labels = self.manager.get_all_used_labels()
+        next_label = index_to_label(get_next_label_index(all_used_labels))
+        
+        dialog = MarkerInfoDialog(self, default_label=next_label, current_map_labels=all_used_labels)
         if dialog.exec() == QDialog.Accepted:
             self.canvas._pending_data = dialog.get_data(mode=self.mode)
             self.canvas.setCursor(Qt.CrossCursor)
 
     def _on_edit_marker(self, idx):
-        all_used_labels = self._get_all_used_labels()
+        all_used_labels = self.manager.get_all_used_labels()
         marker = self.canvas.markers[idx]
+        dialog = MarkerInfoDialog(self, edit_data=marker, current_map_labels=all_used_labels)
         
-        dialog = MarkerInfoDialog(
-            self,
-            edit_data=marker,
-            current_map_labels=all_used_labels
-        )
         if dialog.exec() == QDialog.Accepted:
             new_data = dialog.get_data(mode=self.mode, existing_data=marker)
             new_label = new_data["label"]
@@ -484,26 +413,19 @@ class MapEditorDialog(QDialog):
             "PNG Files (*.png);;Images (*.png *.jpg *.jpeg *.bmp)"
         )
         if not path: return
-        fname = os.path.basename(path)
-        dest_path = os.path.join(self.mapping_dir, fname)
-        if not os.path.exists(dest_path):
-            os.makedirs(self.mapping_dir, exist_ok=True)
-            try:
-                shutil.copy2(path, dest_path)
-            except Exception as e:
-                QMessageBox.critical(self, "File Error", f"Failed to copy map image:\n{e}")
-                return
-        self.maps_data[fname] = []
+        
+        fname = self.manager.add_map(path)
+        self.maps_data = self.manager.get_maps_data()
         self.combo_maps.addItem(fname)
         self.combo_maps.setCurrentText(fname)
-        self._save_data()
+        self.canvas.markers = []
+        self.canvas.update()
 
     def _on_delete_marker(self, idx):
         reply = QMessageBox.warning(
             self, "Confirm Deletion",
             f"Delete marker '{self.canvas.markers[idx]['label']}'?\nThis will erase all data associated with this location.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         if reply == QMessageBox.Yes:
             del self.canvas.markers[idx]
@@ -511,7 +433,6 @@ class MapEditorDialog(QDialog):
             self._save_data()
 
     def _on_export_map(self):
-        """Exports the current map canvas (with markers) as an image file."""
         if not self.current_map_file:
             QMessageBox.warning(self, "No Map", "Please select a map to export.")
             return
@@ -530,26 +451,6 @@ class MapEditorDialog(QDialog):
                 QMessageBox.critical(self, "Error", f"Failed to export map:\n{e}")
 
     def _save_data(self):
-        if not self.mapping_dir:
-            return
         if self.current_map_file:
             self.maps_data[self.current_map_file] = list(self.canvas.markers)
-        os.makedirs(self.mapping_dir, exist_ok=True)
-        try:
-            locations_list = []
-            for fname, markers in self.maps_data.items():
-                locations_list.append({
-                    "filename": fname,
-                    "markers": markers
-                })
-            output_data = {
-                "maps": {
-                    "locations": locations_list
-                }
-            }
-            with open(self.json_file, 'w', encoding='utf-8') as f:
-                json.dump(output_data, f, indent=2)
-            logger.info(f"✅ Saved map data to {self.json_file}")
-        except Exception as e:
-            logger.error(f"Failed to save map data: {e}")
-            QMessageBox.critical(self, "Save Error", f"Failed to save map data immediately:\n{e}")
+        self.manager.set_maps_data(self.maps_data)
