@@ -476,8 +476,7 @@ class FilterDialog(QDialog):
                     thresholds_list = data.get("thresholds", [])
                     for t in thresholds_list:
                         clean = {k.strip(): v for k, v in t.items()}
-                        # Support both "analyte" and "gas" keys for backwards compatibility
-                        analyte_name = str(clean.get("analyte", clean.get("gas", ""))).strip()
+                        analyte_name = str(clean.get("analyte")).strip()
                         if analyte_name:
                             entry = {}
                             for key in ["hotzone_value", "warmzone_value", "fireground_value", "community_value"]:
