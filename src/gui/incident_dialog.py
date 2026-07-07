@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import shutil
 import logging
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QCalendarWidget,
@@ -10,6 +11,7 @@ from PySide6.QtCore import Qt, QDate
 
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd 00:00:00"
+current_dir = os.path.dirname(os.path.abspath(__file__))
 
 
 def setup_incident_logging(incident_path):
@@ -201,6 +203,13 @@ class IncidentDialog(QDialog):
             with open(os.path.join(meta_dir, "incident.json"), 'w', encoding='utf-8') as f:
                 json.dump(self.get_data(), f, indent=2, ensure_ascii=False)
             logger.info(f"Incident metadata saved for: {label}")
+            
+            # Copy thresholds.json from static/lists to the incident's meta directory
+            static_thresholds_file = os.path.normpath(os.path.join(current_dir, '..', 'static', 'lists', 'thresholds.json'))
+            incident_thresholds_file = os.path.join(meta_dir, "thresholds.json")
+            if os.path.exists(static_thresholds_file) and not os.path.exists(incident_thresholds_file):
+                shutil.copy(static_thresholds_file, incident_thresholds_file)
+                logger.info(f"Thresholds file copied to: {incident_thresholds_file}")
         except Exception as e:
             QMessageBox.critical(self, "File System Error", f"Failed to save incident.json:\n{e}")
             logger.error(f"Failed to save incident.json for '{label}': {e}")
