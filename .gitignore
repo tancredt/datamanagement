@@ -1,4 +1,8 @@
 ```
+incidents/
+env/
+*.py~
+
 # Python
 __pycache__/
 *.pyc
