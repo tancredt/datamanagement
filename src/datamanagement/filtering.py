@@ -99,129 +99,109 @@ def filter_data(df, start_dt, stop_dt, selected_sites, selected_devices,
 
 def aggregate_data(df, interval, group_by, start_dt=None, stop_dt=None):
     """
-    FUNCTION 2: TIME AGGREGATION & VALIDITY CHECK
-    Takes an already filtered DataFrame and aggregates it into time intervals.
-    Dynamically finds all numeric analyte columns, calculates stats, and 
-    recalculates INVALID flags based on 1-minute bin coverage (80% threshold).
+    Aggregates data into time intervals and calculates INVALID flags 
+    based on 1-minute bin coverage (80% threshold).
     """
     if df is None or df.empty:
         return pd.DataFrame()
-
+        
     interval_mins = int(interval)
-    
     res = df.copy()
     
-    # Drop any existing INVALID_ columns since we are going to recalculate them
-    inv_cols = [c for c in res.columns if str(c).startswith('INVALID_')]
-    if inv_cols:
-        res = res.drop(columns=inv_cols)
-
-    # Identify analyte columns (all numeric columns except core metadata)
+    # Identify analyte columns (exclude metadata and INVALID_ flags)
     metadata_cols = {'LOG TIME', 'SITE', 'DEVICE', 'Latitude', 'Longitude'}
-    analyte_cols = [col for col in res.select_dtypes(include=[np.number]).columns if col not in metadata_cols]
+    analyte_cols = [
+        col for col in res.select_dtypes(include=[np.number]).columns 
+        if col not in metadata_cols and not str(col).upper().startswith('INVALID_')
+    ]
     
-    agg_df = res.set_index('LOG TIME')
+    res['LOG TIME'] = pd.to_datetime(res['LOG TIME'], errors='coerce')
+    res = res.dropna(subset=['LOG TIME'])
+    
     group_col = 'DEVICE' if group_by == 'Device' else 'SITE'
     
-    # ──────────────────────────────────────────────
-    # 1. AGGREGATE ANALYTES (Mean, Min, Max, Count)
-    # ──────────────────────────────────────────────
-    agg_dict = {analyte: ['mean', 'min', 'max', 'count'] for analyte in analyte_cols}
+    # STEP 1: Extract validity mask BEFORE dropping INVALID_ cols
+    valid_df = res[['LOG TIME', group_col]].copy()
+    for analyte in analyte_cols:
+        inv_col = f"INVALID_{analyte}"
+        if inv_col in res.columns:
+            valid_df[analyte] = (pd.to_numeric(res[inv_col], errors='coerce').fillna(1) == 0).astype(int)
+        else:
+            valid_df[analyte] = (~res[analyte].isna()).astype(int)
     
+    # NOW drop INVALID_ columns for main aggregation
+    inv_cols = [c for c in res.columns if str(c).upper().startswith('INVALID_')]
+    if inv_cols:
+        res = res.drop(columns=inv_cols, errors='ignore')
+    
+    # STEP 2: Main Aggregation (Mean, Min, Max, Count)
+    agg_df = res.set_index('LOG TIME')
+    agg_dict = {analyte: ['mean', 'min', 'max', 'count'] for analyte in analyte_cols}
     preserve_cols = ['SITE', 'DEVICE', 'Latitude', 'Longitude']
     for col in preserve_cols:
         if col in agg_df.columns and col != group_col and col not in agg_dict:
             agg_dict[col] = 'first'
             
-    res_agg = agg_df.groupby(
-        [group_col, pd.Grouper(freq=f'{interval_mins}min', closed='right', label='right')]
-    ).agg(agg_dict)
+    main_grouper = pd.Grouper(freq=f'{interval_mins}min', closed='left', label='right', origin='start_day')
     
-    # Flatten the MultiIndex columns
+    res_agg = agg_df.groupby([group_col, main_grouper]).agg(agg_dict)
+    
     new_columns = []
     for col, stat in res_agg.columns:
         if col in analyte_cols:
-            if stat == 'mean':
-                new_columns.append(col)
-            else:
-                new_columns.append(f"{col}_{stat}")
+            new_columns.append(col if stat == 'mean' else f"{col}_{stat}")
         else:
             new_columns.append(col)
-            
     res_agg.columns = new_columns
     res_agg = res_agg.reset_index()
+    
+    if 'LOG TIME' not in res_agg.columns and len(res_agg.columns) > 1:
+        res_agg = res_agg.rename(columns={res_agg.columns[1]: 'LOG TIME'})
 
-    # ──────────────────────────────────────────────
-    # 2. DYNAMIC INVALID FLAG CALCULATION (1-Min Bin Coverage)
-    # ──────────────────────────────────────────────
+    # STEP 3: 1-Minute Coverage Validation
     if analyte_cols and interval_mins > 0:
-        # We need the global start/stop to create a continuous 1-min timeline.
-        # This ensures completely empty minutes are counted as 0 in the denominator.
-        if start_dt is not None and stop_dt is not None:
-            start_ts = pd.Timestamp(start_dt)
-            stop_ts = pd.Timestamp(stop_dt)
-            
-            if agg_df.index.tz is not None and start_ts.tz is None:
-                start_ts = start_ts.tz_localize(agg_df.index.tz)
-                stop_ts = stop_ts.tz_localize(agg_df.index.tz)
-            elif agg_df.index.tz is None and start_ts.tz is not None:
-                start_ts = start_ts.tz_localize(None)
-                stop_ts = stop_ts.tz_localize(None)
-                
-            time_index = pd.date_range(start=start_ts, end=stop_ts, freq='1min')
-        else:
-            time_index = None
-
-        groups = res[group_col].unique() if group_col in res.columns else [None]
-        all_1min_counts = []
+        # A. Assign each row to its 1-minute bin
+        valid_df['min_bin'] = valid_df['LOG TIME'].dt.ceil('1min')
         
-        for g in groups:
-            if group_col in res.columns:
-                g_df = agg_df[agg_df[group_col] == g]
-            else:
-                g_df = agg_df
-                
-            # Since filter_data already removed invalid rows, we just check for non-NaN
-            valid_flags = pd.DataFrame(index=g_df.index)
-            for analyte in analyte_cols:
-                valid_flags[analyte] = (~g_df[analyte].isna()).astype(int)
-                
-            # Count valid readings per 1-minute bin
-            g_counts = valid_flags.resample('1min', closed='right', label='right').sum()
-            if time_index is not None and not time_index.empty:
-                g_counts = g_counts.reindex(time_index, fill_value=0)
-            g_counts[group_col] = g
-            all_1min_counts.append(g_counts)
+        # B. Count valid readings per 1-min bin per device
+        min_counts = valid_df.groupby([group_col, 'min_bin'])[analyte_cols].sum().reset_index()
+        
+        # C. Convert to has_data: 1 if any valid reading in that minute, else 0
+        for analyte in analyte_cols:
+            min_counts[analyte] = (min_counts[analyte] > 0).astype(int)
+        
+        # D. Map each 1-min bin to its parent interval bin
+        min_counts['interval_bin'] = min_counts['min_bin'].dt.ceil(f'{interval_mins}min')
+        
+        # E. Sum the has_data flags per interval bin
+        bins_with_data = min_counts.groupby([group_col, 'interval_bin'])[analyte_cols].sum().reset_index()
+        
+        # F. Rename interval_bin to LOG TIME for merging
+        bins_with_data = bins_with_data.rename(columns={'interval_bin': 'LOG TIME'})
+        
+        # G. Apply 80% threshold rule
+        threshold = 0.8 * interval_mins
+        
+        for analyte in analyte_cols:
+            inv_col = f"INVALID_{analyte}"
+            flag_df = bins_with_data[[group_col, 'LOG TIME']].copy()
+            flag_df[inv_col] = (bins_with_data[analyte] < threshold).astype(int)
             
-        if all_1min_counts:
-            counts_1min_df = pd.concat(all_1min_counts).reset_index().rename(columns={'index': 'LOG TIME'})
-            counts_1min_df = counts_1min_df.set_index('LOG TIME')
+            res_agg = res_agg.merge(flag_df, on=[group_col, 'LOG TIME'], how='left')
+            res_agg[inv_col] = res_agg[inv_col].fillna(1).astype(int)
+    else:
+        for analyte in analyte_cols:
+            res_agg[f"INVALID_{analyte}"] = 1
+    
+    # STEP 4: Filter to only include bins within the requested time range
+    if stop_dt is not None:
+        stop_ts = pd.Timestamp(stop_dt)
+        if res_agg['LOG TIME'].dt.tz is not None and stop_ts.tz is None:
+            stop_ts = stop_ts.tz_localize(res_agg['LOG TIME'].dt.tz)
+        elif res_agg['LOG TIME'].dt.tz is None and stop_ts.tz is not None:
+            stop_ts = stop_ts.tz_localize(None)
+        res_agg = res_agg[res_agg['LOG TIME'] <= stop_ts]
             
-            # Convert counts to 1 if there was ANY data in that 1-min bin, else 0
-            has_data = (counts_1min_df[analyte_cols] > 0).astype(int)
-            has_data[group_col] = counts_1min_df[group_col]
-            
-            # Sum the number of 1-min bins that had data, grouped by the target interval
-            bins_with_data = has_data.groupby(group_col).resample(f'{interval_mins}min', closed='right', label='right')[analyte_cols].sum().reset_index()
-            
-            # Calculate coverage fraction (e.g., 12 out of 15 minutes = 0.80)
-            coverage = bins_with_data[analyte_cols] / interval_mins
-            
-            # Apply 80% threshold rule
-            for analyte in analyte_cols:
-                inv_col = f"INVALID_{analyte}"
-                flag_df = bins_with_data[[group_col, 'LOG TIME']].copy()
-                
-                # If coverage is < 0.8 (80%), it is INVALID (1). Otherwise valid (0).
-                flag_df[inv_col] = (coverage[analyte] < 0.8).astype(int)
-                
-                res_agg = res_agg.merge(flag_df, on=[group_col, 'LOG TIME'], how='left')
-                # Fill missing intervals with 1 (Invalid)
-                res_agg[inv_col] = res_agg[inv_col].fillna(1).astype(int)
-        else:
-            for analyte in analyte_cols:
-                res_agg[f"INVALID_{analyte}"] = 1
-
     return res_agg
 
 def summarise_data(df):
