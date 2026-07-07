@@ -79,7 +79,19 @@ class SummaryTableView(QWidget):
 
             for analyte in valid_analytes:
                 if analyte in group_df.columns:
-                    analyte_data = group_df[analyte].dropna()
+                    # Check for INVALID column for this analyte
+                    inv_col = f"INVALID_{analyte}"
+                    has_invalid_flag = inv_col in group_df.columns
+                    
+                    if has_invalid_flag:
+                        # Filter out invalid readings when calculating statistics
+                        invalid_mask = pd.to_numeric(group_df[inv_col], errors='coerce').fillna(0) > 0
+                        analyte_data = group_df.loc[~invalid_mask, analyte].dropna()
+                        invalid_count = invalid_mask.sum()
+                    else:
+                        analyte_data = group_df[analyte].dropna()
+                        invalid_count = 0
+                    
                     count_val = len(analyte_data)
 
                     if count_val > 0:
@@ -91,7 +103,7 @@ class SummaryTableView(QWidget):
                         rows_data.append((
                             str(group_val), analyte,
                             float(min_val), float(max_val), float(mean_val),
-                            int(count_val), dec_pls
+                            int(count_val), dec_pls, invalid_count
                         ))
 
         self.summary_table.setSortingEnabled(False)
@@ -99,26 +111,36 @@ class SummaryTableView(QWidget):
 
         active_thresholds = get_active_thresholds_func()
 
-        for row, (grp, analyte, min_v, max_v, mean_v, count_v, dec_pls) in enumerate(rows_data):
+        for row, (grp, analyte, min_v, max_v, mean_v, count_v, dec_pls, invalid_cnt) in enumerate(rows_data):
             self.summary_table.setItem(row, 0, QTableWidgetItem(grp))
             self.summary_table.setItem(row, 1, QTableWidgetItem(analyte))
 
             min_item = NumericTableWidgetItem(f"{min_v:.{dec_pls}f}")
             if self._is_value_exceeding_threshold(analyte, min_v, active_thresholds):
                 min_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
+            if invalid_cnt > 0:
+                min_item.setBackground(QColor(255, 200, 200))
             self.summary_table.setItem(row, 2, min_item)
 
             max_item = NumericTableWidgetItem(f"{max_v:.{dec_pls}f}")
             if self._is_value_exceeding_threshold(analyte, max_v, active_thresholds):
                 max_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
+            if invalid_cnt > 0:
+                max_item.setBackground(QColor(255, 200, 200))
             self.summary_table.setItem(row, 3, max_item)
 
             mean_item = NumericTableWidgetItem(f"{mean_v:.{dec_pls}f}")
             if self._is_value_exceeding_threshold(analyte, mean_v, active_thresholds):
                 mean_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
+            if invalid_cnt > 0:
+                mean_item.setBackground(QColor(255, 200, 200))
             self.summary_table.setItem(row, 4, mean_item)
 
-            self.summary_table.setItem(row, 5, NumericTableWidgetItem(str(count_v)))
+            count_item = NumericTableWidgetItem(str(count_v))
+            if invalid_cnt > 0:
+                count_item.setBackground(QColor(255, 200, 200))
+                count_item.setToolTip(f"{invalid_cnt} invalid reading(s) excluded")
+            self.summary_table.setItem(row, 5, count_item)
 
         self.summary_table.setSortingEnabled(True)
         self.summary_data = rows_data
