@@ -244,6 +244,9 @@ class FilterDialog(QDialog):
         self.initial_filters = initial_filters or {}
         self._selected_threshold_level = None
 
+        # Load thresholds from the incident's meta directory
+        self._reload_thresholds()
+
         # Handle Spectral metadata loading
         if self.data_type == "spectral":
             self.available_devices, self.available_locations = self._load_spectral_metadata()
@@ -373,8 +376,9 @@ class FilterDialog(QDialog):
         # UPDATED: Disable everything except Start/Stop times and Dialog buttons for Spectral
         if self.data_type == "spectral":
             self.group_by_combo.setEnabled(False)
-            self.threshold_combo.setEnabled(False)
-            self.btn_thresholds.setEnabled(False)
+            # Enable threshold selection for spectral data
+            self.threshold_combo.setEnabled(True)
+            self.btn_thresholds.setEnabled(True)
             self.interval_combo.setEnabled(False)
             self.only_valid_cb.setEnabled(False)
             self.site_group.set_enabled(False)
@@ -472,13 +476,15 @@ class FilterDialog(QDialog):
                     thresholds_list = data.get("thresholds", [])
                     for t in thresholds_list:
                         clean = {k.strip(): v for k, v in t.items()}
-                        analyte_name = str(clean.get("analyte", "")).strip()
+                        # Support both "analyte" and "gas" keys for backwards compatibility
+                        analyte_name = str(clean.get("analyte", clean.get("gas", ""))).strip()
                         if analyte_name:
                             entry = {}
                             for key in ["hotzone_value", "warmzone_value", "fireground_value", "community_value"]:
                                 raw = clean.get(key, "0")
                                 try: entry[key] = float(str(raw).strip())
                                 except (ValueError, TypeError): entry[key] = 0.0
+                            # Store with uppercase key for case-insensitive lookup
                             self.thresholds_lookup[analyte_name.upper()] = entry
             except Exception as e:
                 logger.error(f"Failed to load thresholds: {e}")
