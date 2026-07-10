@@ -9,12 +9,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDateTime, QSize
 from PySide6.QtGui import QDoubleValidator
 from datamanagement.locations import LocationManager
+from map_viewer_dialog import MapViewerDialog
 
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
 
 class AddSpotReadingDialog(QDialog):
-    """Dialog to input details for a spot reading event (supports multiple analytes at once)."""
+    # ... [AddSpotReadingDialog remains exactly the same] ...
     def __init__(self, parent=None, available_labels=None, available_analytes=None, initial_data=None, existing_readings=None, exclude_index=None, available_devices=None):
         super().__init__(parent)
         self.available_labels = available_labels or []
@@ -35,34 +36,29 @@ class AddSpotReadingDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(8)
         form.setLabelAlignment(Qt.AlignRight)
-
         self.cmb_location = QComboBox()
         self.cmb_location.setMinimumHeight(28)
         self.cmb_location.setEditable(False)
         self.cmb_location.addItems(self.available_labels if self.available_labels else [])
         self.cmb_location.setPlaceholderText("Select location...")
         form.addRow("Location *:", self.cmb_location)
-
         self.cmb_device = QComboBox()
         self.cmb_device.setEditable(True)
         self.cmb_device.setMinimumHeight(28)
         self.cmb_device.setPlaceholderText("Optional device label...")
         self.cmb_device.addItems(self.available_devices)
         form.addRow("Device:", self.cmb_device)
-
         self.dt_logtime = QDateTimeEdit()
         self.dt_logtime.setCalendarPopup(True)
         self.dt_logtime.setDateTime(QDateTime.currentDateTime())
         self.dt_logtime.setDisplayFormat(DATE_FORMAT)
         self.dt_logtime.setMinimumHeight(28)
         form.addRow("Log Time *:", self.dt_logtime)
-
         self.le_observations = QLineEdit()
         self.le_observations.setPlaceholderText("Optional observations...")
         self.le_observations.setMinimumHeight(28)
         form.addRow("Observations:", self.le_observations)
         layout.addLayout(form)
-
         layout.addWidget(QLabel("<b>Analyte Readings:</b>"))
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -70,12 +66,10 @@ class AddSpotReadingDialog(QDialog):
         self.scroll.setMaximumHeight(300)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
         self.scroll_widget = QWidget()
         self.analyte_layout = QFormLayout(self.scroll_widget)
         self.analyte_layout.setSpacing(6)
         self.analyte_layout.setLabelAlignment(Qt.AlignRight)
-        
         self.analyte_inputs = {}
         for analyte in self.available_analytes:
             le = QLineEdit()
@@ -84,10 +78,8 @@ class AddSpotReadingDialog(QDialog):
             le.setValidator(QDoubleValidator())
             self.analyte_layout.addRow(f"{analyte}:", le)
             self.analyte_inputs[analyte] = le
-            
         self.scroll.setWidget(self.scroll_widget)
         layout.addWidget(self.scroll)
-
         if self.initial_data:
             self.cmb_location.setCurrentText(self.initial_data.get("location", ""))
             self.cmb_device.setCurrentText(self.initial_data.get("device", ""))
@@ -99,7 +91,6 @@ class AddSpotReadingDialog(QDialog):
                 val = self.initial_data.get(analyte)
                 if val is not None and analyte in self.analyte_inputs:
                     self.analyte_inputs[analyte].setText(str(val))
-
         layout.addSpacing(10)
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.setMinimumHeight(34)
@@ -138,16 +129,14 @@ class SpotReadingsDialog(QDialog):
     def __init__(self, parent=None, incident_path=None):
         super().__init__(parent)
         self.incident_path = incident_path
-        
-        # Use LocationManager for all JSON operations
         self.manager = LocationManager(incident_path, mode="spot")
+        self.mapping_dir = os.path.join(incident_path, "mapping") # Added mapping dir
         self.all_readings = self.manager.get_flat_readings()
         self.available_labels = self.manager.get_available_labels()
-        
         self.available_analytes = []
         self.analyte_dec_pls = {}
         self._load_analytes()
-        
+
         self.setWindowTitle("Spot Readings Manager")
         self.resize(1000, 600)
         self._setup_ui()
@@ -178,15 +167,21 @@ class SpotReadingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
-        
         ctrl_row = QHBoxLayout()
+        
+        # Added Show Map(s) button
+        self.btn_show_maps = QPushButton("Show Map(s)")
+        self.btn_show_maps.setMinimumHeight(32)
+        self.btn_show_maps.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
+        self.btn_show_maps.setIconSize(QSize(18, 18))
+        ctrl_row.addWidget(self.btn_show_maps)
+        
         ctrl_row.addWidget(QLabel("Filter by Location:"))
         self.cmb_filter = QComboBox()
         self.cmb_filter.setMinimumWidth(150)
         ctrl_row.addWidget(self.cmb_filter)
         ctrl_row.addStretch()
         layout.addLayout(ctrl_row)
-
         self.table = QTableWidget()
         headers = ["Location", "Device", "Log Time", "Observations"] + self.available_analytes
         self.table.setColumnCount(len(headers))
@@ -200,21 +195,18 @@ class SpotReadingsDialog(QDialog):
         self.table.setAlternatingRowColors(True)
         self.table.setStyleSheet("QTableWidget { font-size: 12px; }")
         layout.addWidget(self.table)
-
         btn_row = QHBoxLayout()
         self.btn_add = QPushButton("Add Reading...")
         self.btn_add.setMinimumHeight(32)
         self.btn_add.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
         self.btn_add.setIconSize(QSize(18, 18))
         btn_row.addWidget(self.btn_add)
-        
         self.btn_edit = QPushButton("Edit Selected...")
         self.btn_edit.setMinimumHeight(32)
         self.btn_edit.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
         self.btn_edit.setIconSize(QSize(18, 18))
         self.btn_edit.setEnabled(False)
         btn_row.addWidget(self.btn_edit)
-        
         self.btn_remove = QPushButton("Remove Selected")
         self.btn_remove.setMinimumHeight(32)
         self.btn_remove.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
@@ -223,12 +215,12 @@ class SpotReadingsDialog(QDialog):
         btn_row.addWidget(self.btn_remove)
         btn_row.addStretch()
         layout.addLayout(btn_row)
-
         self.btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
         self.btn_box.setMinimumHeight(34)
         layout.addWidget(self.btn_box)
 
     def _connect_signals(self):
+        self.btn_show_maps.clicked.connect(self._on_show_maps) # Connected signal
         self.btn_add.clicked.connect(self._on_add)
         self.btn_edit.clicked.connect(self._on_edit)
         self.btn_remove.clicked.connect(self._on_remove)
@@ -250,9 +242,31 @@ class SpotReadingsDialog(QDialog):
         self.cmb_filter.blockSignals(False)
 
     def _update_table(self):
+        # 1. Determine which analytes actually have data across all readings
+        active_analytes = []
+        for analyte in self.available_analytes:
+            for r in self.all_readings:
+                val = r.get(analyte)
+                if val is not None and str(val).strip() != "":
+                    active_analytes.append(analyte)
+                    break
+        
         filter_val = self.cmb_filter.currentText()
         rows_data = [(i, r) for i, r in enumerate(self.all_readings) if filter_val == "All" or r.get("location") == filter_val]
         
+        # 2. Dynamically set headers and column count based on active analytes
+        headers = ["Location", "Device", "Log Time", "Observations"] + active_analytes
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        
+        # Re-apply column resizing modes
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        for i in range(4, len(headers)):
+            self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
+            
         self.table.setRowCount(len(rows_data))
         for i, (orig_idx, r_data) in enumerate(rows_data):
             item = QTableWidgetItem(r_data.get("location", ""))
@@ -262,7 +276,8 @@ class SpotReadingsDialog(QDialog):
             self.table.setItem(i, 2, QTableWidgetItem(r_data.get("logtime", "")))
             self.table.setItem(i, 3, QTableWidgetItem(r_data.get("observations", "")))
             
-            for j, analyte in enumerate(self.available_analytes):
+            # 3. Populate only the active analyte columns
+            for j, analyte in enumerate(active_analytes):
                 val = r_data.get(analyte)
                 if val is not None:
                     dec_pls = self.analyte_dec_pls.get(analyte, 2) 
@@ -273,6 +288,13 @@ class SpotReadingsDialog(QDialog):
                     
         self.table.resizeRowsToContents()
         self._update_button_states()
+
+    # Added Map Handler
+    def _on_show_maps(self):
+        maps_data = self.manager.get_maps_data()
+        available_markers = {fname: [m.get("label") for m in markers if m.get("label")] for fname, markers in maps_data.items()}
+        dialog = MapViewerDialog(self, available_markers, maps_data, self.mapping_dir)
+        dialog.exec()
 
     def _on_add(self):
         dialog = AddSpotReadingDialog(

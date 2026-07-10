@@ -50,9 +50,8 @@ class CollapsibleBox(QWidget):
         self.is_expanded = not self.is_expanded
         self.content_area.setVisible(self.is_expanded)
 
-
 class OverviewView(QWidget):
-    """Displays a high-level summary of Area, Spot, and Spectral data using accordions."""
+    """Displays a high-level summary of Area, Spot, Spectral, and Exposure data using accordions."""
     def __init__(self, analyte_dec_pls, parent=None):
         super().__init__(parent)
         self.analyte_dec_pls = analyte_dec_pls
@@ -92,7 +91,7 @@ class OverviewView(QWidget):
         self.box_spot_device.content_layout.addWidget(self.tree_spot_device)
         self.container_layout.addWidget(self.box_spot_device)
 
-        # Spectral Accordions (NEW)
+        # Spectral Accordions
         self.box_spectral_site = CollapsibleBox("Spectral By Site")
         self.tree_spectral_site = self._create_tree()
         self.box_spectral_site.content_layout.addWidget(self.tree_spectral_site)
@@ -102,6 +101,17 @@ class OverviewView(QWidget):
         self.tree_spectral_device = self._create_tree()
         self.box_spectral_device.content_layout.addWidget(self.tree_spectral_device)
         self.container_layout.addWidget(self.box_spectral_device)
+
+        # ── NEW: Exposure Accordions ──
+        self.box_exposure_site = CollapsibleBox("Exposures By Area")
+        self.tree_exposure_site = self._create_tree()
+        self.box_exposure_site.content_layout.addWidget(self.tree_exposure_site)
+        self.container_layout.addWidget(self.box_exposure_site)
+
+        self.box_exposure_device = CollapsibleBox("Exposures By Identifier")
+        self.tree_exposure_device = self._create_tree()
+        self.box_exposure_device.content_layout.addWidget(self.tree_exposure_device)
+        self.container_layout.addWidget(self.box_exposure_device)
 
         self.container_layout.addStretch()
         scroll.setWidget(container)
@@ -116,7 +126,7 @@ class OverviewView(QWidget):
         tree.setMaximumHeight(300)
         return tree
 
-    def update_data(self, area_data, spot_data, spectral_data):
+    def update_data(self, area_data, spot_data, spectral_data, exposure_data=None):
         self.box_area_site.setVisible(True)
         self.box_area_device.setVisible(True)
         self.box_spot_site.setVisible(True)
@@ -124,17 +134,30 @@ class OverviewView(QWidget):
         self.box_spectral_site.setVisible(True)
         self.box_spectral_device.setVisible(True)
         
-        # Populate Area trees (no longer passing available_analytes)
+        # Handle Exposure Visibility
+        if exposure_data is not None and not exposure_data.empty:
+            self.box_exposure_site.setVisible(True)
+            self.box_exposure_device.setVisible(True)
+        else:
+            self.box_exposure_site.setVisible(False)
+            self.box_exposure_device.setVisible(False)
+
+        # Populate Area trees
         self._populate_tree(self.tree_area_site, area_data, 'SITE', "Site")
         self._populate_tree(self.tree_area_device, area_data, 'DEVICE', "Device")
-        
+
         # Populate Spot trees
         self._populate_tree(self.tree_spot_site, spot_data, 'SITE', "Site")
         self._populate_tree(self.tree_spot_device, spot_data, 'DEVICE', "Device")
-        
+
         # Populate Spectral trees
         self._populate_spectral_tree(self.tree_spectral_site, spectral_data, 'SITE', "Site")
         self._populate_spectral_tree(self.tree_spectral_device, spectral_data, 'DEVICE', "Device")
+
+        # Populate Exposure trees
+        if exposure_data is not None and not exposure_data.empty:
+            self._populate_exposure_tree(self.tree_exposure_site, exposure_data, 'SITE', "Area")
+            self._populate_exposure_tree(self.tree_exposure_device, exposure_data, 'DEVICE', "Identifier")
 
     def _populate_tree(self, tree, df, group_col, label_prefix):
         """Helper to populate a QTreeWidget with grouped Area/Spot data."""
@@ -168,11 +191,9 @@ class OverviewView(QWidget):
                 last_row = group_df.loc[last_idx]
                 last_time = last_row['LOG TIME']
                 time_str = last_time.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(last_time) else "N/A"
-                
                 time_item = QTreeWidgetItem(["Last Reading Time", time_str])
                 top_item.addChild(time_item)
 
-                # ── GET ANALYTES DIRECTLY FROM SELF ──
                 for analyte in self.analyte_dec_pls.keys():
                     if analyte in group_df.columns:
                         val = last_row.get(analyte)
@@ -187,14 +208,12 @@ class OverviewView(QWidget):
 
     def update_spectral_data(self, spectral_data):
         """Updates Spectral accordions. Hides Area and Spot."""
-        # Toggle visibility
         self.box_area_site.setVisible(False)
         self.box_area_device.setVisible(False)
         self.box_spot_site.setVisible(False)
         self.box_spot_device.setVisible(False)
         self.box_spectral_site.setVisible(True)
         self.box_spectral_device.setVisible(True)
-
         self._populate_spectral_tree(self.tree_spectral_site, spectral_data, 'SITE', "Site")
         self._populate_spectral_tree(self.tree_spectral_device, spectral_data, 'DEVICE', "Device")
 
@@ -230,7 +249,6 @@ class OverviewView(QWidget):
                 last_row = group_df.loc[last_idx]
                 last_time = last_row['LOG TIME']
                 time_str = last_time.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(last_time) else "N/A"
-                
                 time_item = QTreeWidgetItem(["Last Record Time", time_str])
                 top_item.addChild(time_item)
 
@@ -244,5 +262,61 @@ class OverviewView(QWidget):
                 if pd.notna(comments) and str(comments).strip():
                     comm_item = QTreeWidgetItem(["Comments", str(comments)])
                     top_item.addChild(comm_item)
-                    
+            tree.addTopLevelItem(top_item)
+
+    # ── NEW: EXPOSURE TREE HELPER ──
+    def _populate_exposure_tree(self, tree, df, group_col, label_prefix):
+        """Helper to populate a QTreeWidget with grouped Exposure data."""
+        tree.clear()
+        if df is None or df.empty:
+            item = QTreeWidgetItem(["No Data Available", ""])
+            tree.addTopLevelItem(item)
+            return
+
+        df = df.copy()
+        if 'LOG TIME' in df.columns:
+            df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
+            df = df.dropna(subset=['LOG TIME'])
+
+        if df.empty or group_col not in df.columns:
+            item = QTreeWidgetItem(["No Data Available", ""])
+            tree.addTopLevelItem(item)
+            return
+
+        groups = df[group_col].dropna().unique()
+        groups = sorted([str(g) for g in groups if str(g).strip()])
+
+        for group_name in groups:
+            group_df = df[df[group_col] == group_name]
+            total_records = len(group_df)
+            top_item = QTreeWidgetItem([f"{label_prefix}: {group_name}", f"Total Records: {total_records}"])
+            top_item.setExpanded(False)
+
+            if not group_df.empty:
+                last_idx = group_df['LOG TIME'].idxmax()
+                last_row = group_df.loc[last_idx]
+                last_time = last_row['LOG TIME']
+                time_str = last_time.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(last_time) else "N/A"
+                
+                time_item = QTreeWidgetItem(["Last Exposure Start", time_str])
+                top_item.addChild(time_item)
+
+                # Show analyte values (prefer mean, then max, then min)
+                for analyte in self.analyte_dec_pls.keys():
+                    val = None
+                    for suffix in ['_mean', '_max', '_min']:
+                        col_name = f"{analyte}{suffix}"
+                        if col_name in group_df.columns and pd.notna(last_row.get(col_name)):
+                            val = last_row.get(col_name)
+                            break
+
+                    if val is not None and pd.notna(val):
+                        dec_pls = self.analyte_dec_pls.get(analyte, 2)
+                        val_str = f"{val:.{dec_pls}f}"
+                    else:
+                        val_str = "N/A"
+
+                    analyte_item = QTreeWidgetItem([analyte, val_str])
+                    top_item.addChild(analyte_item)
+
             tree.addTopLevelItem(top_item)

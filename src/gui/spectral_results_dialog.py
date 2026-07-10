@@ -8,12 +8,13 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QDateTime, QSize
 from datamanagement.locations import LocationManager
+from map_viewer_dialog import MapViewerDialog
 
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
 
 class AddSpectralRecordDialog(QDialog):
-    """Dialog to input details for a spectral record event."""
+    # ... [AddSpectralRecordDialog remains exactly the same] ...
     def __init__(self, parent=None, available_labels=None, initial_data=None, existing_readings=None, exclude_index=None, available_devices=None):
         super().__init__(parent)
         self.available_labels = available_labels or []
@@ -33,45 +34,37 @@ class AddSpectralRecordDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(8)
         form.setLabelAlignment(Qt.AlignRight)
-
         self.cmb_location = QComboBox()
         self.cmb_location.setMinimumHeight(28)
         self.cmb_location.setEditable(False)
         self.cmb_location.addItems(self.available_labels if self.available_labels else [])
         self.cmb_location.setPlaceholderText("Select location...")
         form.addRow("Location *:", self.cmb_location)
-
         self.cmb_device = QComboBox()
         self.cmb_device.setEditable(True)
         self.cmb_device.setMinimumHeight(28)
         self.cmb_device.setPlaceholderText("Optional device label...")
         self.cmb_device.addItems(self.available_devices)
         form.addRow("Device:", self.cmb_device)
-
         self.dt_logtime = QDateTimeEdit()
         self.dt_logtime.setCalendarPopup(True)
         self.dt_logtime.setDateTime(QDateTime.currentDateTime())
         self.dt_logtime.setDisplayFormat(DATE_FORMAT)
         self.dt_logtime.setMinimumHeight(28)
         form.addRow("Log Time *:", self.dt_logtime)
-
         self.le_chemicals = QLineEdit()
         self.le_chemicals.setPlaceholderText("Compulsory: Chemicals identified...")
         self.le_chemicals.setMinimumHeight(28)
         form.addRow("Chemicals Identified *:", self.le_chemicals)
-
         self.le_comments = QLineEdit()
         self.le_comments.setPlaceholderText("Optional comments...")
         self.le_comments.setMinimumHeight(28)
         form.addRow("Comments:", self.le_comments)
-
         self.le_file_ref = QLineEdit()
         self.le_file_ref.setPlaceholderText("Optional file reference...")
         self.le_file_ref.setMinimumHeight(28)
         form.addRow("File Ref:", self.le_file_ref)
-
         layout.addLayout(form)
-
         if self.initial_data:
             self.cmb_location.setCurrentText(self.initial_data.get("location", ""))
             self.cmb_device.setCurrentText(self.initial_data.get("device", ""))
@@ -81,7 +74,6 @@ class AddSpectralRecordDialog(QDialog):
             self.le_chemicals.setText(self.initial_data.get("chemicals_identified", ""))
             self.le_comments.setText(self.initial_data.get("comments", ""))
             self.le_file_ref.setText(self.initial_data.get("file_ref", ""))
-
         layout.addSpacing(10)
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.setMinimumHeight(34)
@@ -117,12 +109,11 @@ class SpectralResultsDialog(QDialog):
     def __init__(self, parent=None, incident_path=None):
         super().__init__(parent)
         self.incident_path = incident_path
-        
-        # Use LocationManager for all JSON operations
         self.manager = LocationManager(incident_path, mode="spectral")
+        self.mapping_dir = os.path.join(incident_path, "mapping") # Added mapping dir
         self.all_readings = self.manager.get_flat_readings()
         self.available_labels = self.manager.get_available_labels()
-        
+
         self.setWindowTitle("Spectral Results Manager")
         self.resize(900, 500)
         self._setup_ui()
@@ -134,15 +125,21 @@ class SpectralResultsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
-        
         ctrl_row = QHBoxLayout()
+        
+        # Added Show Map(s) button
+        self.btn_show_maps = QPushButton("Show Map(s)")
+        self.btn_show_maps.setMinimumHeight(32)
+        self.btn_show_maps.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
+        self.btn_show_maps.setIconSize(QSize(18, 18))
+        ctrl_row.addWidget(self.btn_show_maps)
+        
         ctrl_row.addWidget(QLabel("Filter by Location:"))
         self.cmb_filter = QComboBox()
         self.cmb_filter.setMinimumWidth(150)
         ctrl_row.addWidget(self.cmb_filter)
         ctrl_row.addStretch()
         layout.addLayout(ctrl_row)
-
         self.table = QTableWidget()
         headers = ["Location", "Device", "Log Time", "Chemicals Identified", "Comments", "File Ref"]
         self.table.setColumnCount(len(headers))
@@ -156,21 +153,18 @@ class SpectralResultsDialog(QDialog):
         self.table.setAlternatingRowColors(True)
         self.table.setStyleSheet("QTableWidget { font-size: 12px; }")
         layout.addWidget(self.table)
-
         btn_row = QHBoxLayout()
         self.btn_add = QPushButton("Add Record...")
         self.btn_add.setMinimumHeight(32)
         self.btn_add.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
         self.btn_add.setIconSize(QSize(18, 18))
         btn_row.addWidget(self.btn_add)
-        
         self.btn_edit = QPushButton("Edit Selected...")
         self.btn_edit.setMinimumHeight(32)
         self.btn_edit.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
         self.btn_edit.setIconSize(QSize(18, 18))
         self.btn_edit.setEnabled(False)
         btn_row.addWidget(self.btn_edit)
-        
         self.btn_remove = QPushButton("Remove Selected")
         self.btn_remove.setMinimumHeight(32)
         self.btn_remove.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
@@ -179,12 +173,12 @@ class SpectralResultsDialog(QDialog):
         btn_row.addWidget(self.btn_remove)
         btn_row.addStretch()
         layout.addLayout(btn_row)
-
         self.btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
         self.btn_box.setMinimumHeight(34)
         layout.addWidget(self.btn_box)
 
     def _connect_signals(self):
+        self.btn_show_maps.clicked.connect(self._on_show_maps) # Connected signal
         self.btn_add.clicked.connect(self._on_add)
         self.btn_edit.clicked.connect(self._on_edit)
         self.btn_remove.clicked.connect(self._on_remove)
@@ -208,7 +202,6 @@ class SpectralResultsDialog(QDialog):
     def _update_table(self):
         filter_val = self.cmb_filter.currentText()
         rows_data = [(i, r) for i, r in enumerate(self.all_readings) if filter_val == "All" or r.get("location") == filter_val]
-        
         self.table.setRowCount(len(rows_data))
         for i, (orig_idx, r_data) in enumerate(rows_data):
             item = QTableWidgetItem(r_data.get("location", ""))
@@ -219,9 +212,15 @@ class SpectralResultsDialog(QDialog):
             self.table.setItem(i, 3, QTableWidgetItem(r_data.get("chemicals_identified", "")))
             self.table.setItem(i, 4, QTableWidgetItem(r_data.get("comments", "")))
             self.table.setItem(i, 5, QTableWidgetItem(r_data.get("file_ref", "")))
-            
         self.table.resizeRowsToContents()
         self._update_button_states()
+
+    # Added Map Handler
+    def _on_show_maps(self):
+        maps_data = self.manager.get_maps_data()
+        available_markers = {fname: [m.get("label") for m in markers if m.get("label")] for fname, markers in maps_data.items()}
+        dialog = MapViewerDialog(self, available_markers, maps_data, self.mapping_dir)
+        dialog.exec()
 
     def _on_add(self):
         dialog = AddSpectralRecordDialog(

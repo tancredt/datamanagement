@@ -11,55 +11,16 @@ from PySide6.QtCore import Qt, QDateTime, QSize, QThread, Signal
 from PySide6.QtGui import QPixmap, QPainter, QPen, QFont, QColor
 from gps_analysis_dialog import GPSAnalysisDialog
 from datamanagement.choices import get_available_devices
+from map_viewer_dialog import MapViewerDialog # Imported from shared module
 
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
 INFINITY_DATE = QDateTime(9999, 12, 31, 23, 59, 59)
 
-class MapPreviewWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.pixmap = None
-        self.markers = []
-        self.setMinimumSize(350, 300)
-        self.setStyleSheet("background-color: #f5f5f5; border: 1px solid #bbb;")
-
-    def set_map(self, pixmap, markers):
-        self.pixmap = pixmap
-        self.markers = markers
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        rect = self.rect()
-        if not self.pixmap or self.pixmap.isNull():
-            painter.drawText(rect, Qt.AlignCenter, "No Map Available")
-            return
-        pw, ph = rect.width(), rect.height()
-        img_w, img_h = self.pixmap.width(), self.pixmap.height()
-        scale = min(pw / img_w, ph / img_h)
-        sw, sh = img_w * scale, img_h * scale
-        dx, dy = (pw - sw) / 2, (ph - sh) / 2
-        painter.save()
-        painter.translate(dx, dy)
-        painter.scale(scale, scale)
-        painter.drawPixmap(0, 0, self.pixmap)
-        font = QFont("Arial", 12, QFont.Bold)
-        painter.setFont(font)
-        for m in self.markers:
-            x, y, label = m.get("x"), m.get("y"), m.get("label")
-            if x is None or y is None or not label:
-                continue
-            pen_width = max(1.0, 2.5 / scale)
-            painter.setPen(QPen(QColor("red"), pen_width))
-            painter.setBrush(QColor("yellow"))
-            painter.drawEllipse(x - 9, y - 9, 18, 18)
-            painter.setPen(QPen(QColor("black"), max(1.0, 1.2 / scale)))
-            painter.drawText(x + 12, y + 5, label)
-        painter.restore()
+# MapPreviewWidget and MapViewerDialog classes have been moved to map_viewer_dialog.py
 
 class AddDeviceLocationDialog(QDialog):
+    # ... [Rest of AddDeviceLocationDialog remains exactly the same] ...
     def __init__(self, parent=None, available_labels=None, initial_data=None, existing_devices=None, exclude_index=None, incident_path=None):
         super().__init__(parent)
         self.incident_path = incident_path
@@ -76,30 +37,25 @@ class AddDeviceLocationDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
-        
         form = QFormLayout()
         form.setSpacing(8)
         form.setLabelAlignment(Qt.AlignRight)
-        
         self.cmb_labels = QComboBox()
         self.cmb_labels.setMinimumHeight(28)
         self.cmb_labels.setEditable(False)
         self.cmb_labels.addItems(self.available_labels if self.available_labels else [])
         self.cmb_labels.setPlaceholderText("Select location...")
         form.addRow("Location (Marker Label) *: ", self.cmb_labels)
-        
         self.cmb_device = QComboBox()
         self.cmb_device.setEditable(True)
         self.cmb_device.addItems(get_available_devices(self.incident_path, data_type="area"))
         form.addRow("Device *: ", self.cmb_device)
-        
         self.dt_start = QDateTimeEdit()
         self.dt_start.setCalendarPopup(True)
         self.dt_start.setDateTime(QDateTime.currentDateTime())
         self.dt_start.setDisplayFormat(DATE_FORMAT)
         self.dt_start.setMinimumHeight(28)
         form.addRow("Start *: ", self.dt_start)
-        
         self.chk_has_stop = QCheckBox("Stopped")
         self.dt_stop = QDateTimeEdit()
         self.dt_stop.setCalendarPopup(True)
@@ -107,22 +63,18 @@ class AddDeviceLocationDialog(QDialog):
         self.dt_stop.setDisplayFormat(DATE_FORMAT)
         self.dt_stop.setMinimumHeight(28)
         self.dt_stop.setEnabled(False)
-        
         self.txt_comment = QLineEdit()
         self.txt_comment.setPlaceholderText("Optional note (e.g., swapped unit, battery died)")
         self.txt_comment.setMinimumHeight(28)
         self.txt_comment.setEnabled(False)
-        
         self.chk_has_stop.toggled.connect(self.dt_stop.setEnabled)
         self.chk_has_stop.toggled.connect(self.txt_comment.setEnabled)
-        
         stop_layout = QHBoxLayout()
         stop_layout.addWidget(self.chk_has_stop)
         stop_layout.addWidget(self.dt_stop)
         stop_layout.addStretch()
         form.addRow("Stop: ", stop_layout)
         form.addRow("Comment: ", self.txt_comment)
-        
         if self.initial_data:
             self.cmb_labels.setCurrentText(self.initial_data.get("location", ""))
             self.cmb_device.setCurrentText(self.initial_data.get("device", ""))
@@ -136,7 +88,6 @@ class AddDeviceLocationDialog(QDialog):
                 if dt_stop.isValid():
                     self.dt_stop.setDateTime(dt_stop)
             self.txt_comment.setText(self.initial_data.get("comment", ""))
-            
         layout.addLayout(form)
         layout.addSpacing(10)
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -149,7 +100,6 @@ class AddDeviceLocationDialog(QDialog):
     def _validate_and_accept(self):
         location = self.cmb_labels.currentText().strip()
         device_id = self.cmb_device.currentText().strip()
-        
         if not location:
             QMessageBox.warning(self, "Validation Error", "Location (Marker Label) is mandatory.")
             self.cmb_labels.setFocus()
@@ -158,7 +108,6 @@ class AddDeviceLocationDialog(QDialog):
             QMessageBox.warning(self, "Validation Error", "Device is mandatory.")
             self.cmb_device.setFocus()
             return
-            
         start_dt = QDateTime.fromSecsSinceEpoch(self.dt_start.dateTime().toSecsSinceEpoch())
         if self.chk_has_stop.isChecked():
             stop_dt = QDateTime.fromSecsSinceEpoch(self.dt_stop.dateTime().toSecsSinceEpoch())
@@ -168,7 +117,6 @@ class AddDeviceLocationDialog(QDialog):
                 return
         else:
             stop_dt = INFINITY_DATE
-            
         for i, dev in enumerate(self.existing_devices):
             if self.exclude_index is not None and i == self.exclude_index:
                 continue
@@ -176,10 +124,8 @@ class AddDeviceLocationDialog(QDialog):
             ex_stop_str = dev.get("stop", "")
             ex_device = dev.get("device", "")
             ex_location = dev.get("location", "")
-            
             ex_start = QDateTime.fromSecsSinceEpoch(QDateTime.fromString(ex_start_str, DATE_FORMAT).toSecsSinceEpoch())
             ex_stop = QDateTime.fromSecsSinceEpoch(QDateTime.fromString(ex_stop_str, DATE_FORMAT).toSecsSinceEpoch()) if ex_stop_str else INFINITY_DATE
-            
             if start_dt < ex_stop and ex_start < stop_dt:
                 if device_id == ex_device:
                     QMessageBox.warning(self, "Validation Error",
@@ -224,7 +170,6 @@ class DeviceLocationsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
-        
         ctrl_row = QHBoxLayout()
         self.btn_show_maps = QPushButton("Show Map(s)")
         self.btn_show_maps.setMinimumHeight(32)
@@ -237,7 +182,6 @@ class DeviceLocationsDialog(QDialog):
         ctrl_row.addWidget(self.cmb_filter)
         ctrl_row.addStretch()
         layout.addLayout(ctrl_row)
-         
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Location", "Device", "Start", "Stop", "Comment"])
@@ -249,37 +193,31 @@ class DeviceLocationsDialog(QDialog):
         self.table.setAlternatingRowColors(True)
         self.table.setStyleSheet("QTableWidget { font-size: 12px; }")
         layout.addWidget(self.table)
-        
         btn_row = QHBoxLayout()
         self.btn_add = QPushButton("Add Device...")
         self.btn_add.setMinimumHeight(32)
         self.btn_add.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
         self.btn_add.setIconSize(QSize(18, 18))
         btn_row.addWidget(self.btn_add)
-        
         self.btn_edit = QPushButton("Edit Selected...")
         self.btn_edit.setMinimumHeight(32)
         self.btn_edit.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
         self.btn_edit.setIconSize(QSize(18, 18))
         self.btn_edit.setEnabled(False)
         btn_row.addWidget(self.btn_edit)
-        
         self.btn_remove = QPushButton("Remove Selected")
         self.btn_remove.setMinimumHeight(32)
         self.btn_remove.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
         self.btn_remove.setIconSize(QSize(18, 18))
         self.btn_remove.setEnabled(False)
         btn_row.addWidget(self.btn_remove)
-        
         self.btn_analyze_gps = QPushButton("Analyze GPS Data...")
         self.btn_analyze_gps.setMinimumHeight(32)
         self.btn_analyze_gps.setIcon(self.style().standardIcon(QStyle.SP_FileDialogInfoView))
         self.btn_analyze_gps.setIconSize(QSize(18, 18))
         btn_row.addWidget(self.btn_analyze_gps)
-        
         btn_row.addStretch()
         layout.addLayout(btn_row)
-        
         self.btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
         self.btn_box.setMinimumHeight(34)
         layout.addWidget(self.btn_box)
@@ -315,7 +253,6 @@ class DeviceLocationsDialog(QDialog):
                             self.all_devices.append(entry)
             except Exception as e:
                 logger.error("Failed to load area locations: %s", e)
-                
         if os.path.exists(self.area_locations_json):
             try:
                 with open(self.area_locations_json, 'r', encoding='utf-8') as f:
@@ -353,7 +290,6 @@ class DeviceLocationsDialog(QDialog):
         for i, dev_data in enumerate(self.all_devices):
             if filter_val == "All" or dev_data.get("location") == filter_val:
                 rows_data.append((i, dev_data))
-                
         self.table.setRowCount(len(rows_data))
         for i, (orig_idx, dev_data) in enumerate(rows_data):
             item = QTableWidgetItem(dev_data.get("location", ""))
@@ -436,12 +372,10 @@ class DeviceLocationsDialog(QDialog):
                     data = json.load(f)
             else:
                 data = {"maps": {"locations": []}}
-                
             locations_list = data.get("maps", {}).get("locations", [])
             for loc in locations_list:
                 for marker in loc.get("markers", []):
                     marker["device_log"] = []
-                    
             for entry in self.all_devices:
                 target_location = entry.get("location")
                 found = False
@@ -455,7 +389,6 @@ class DeviceLocationsDialog(QDialog):
                             break
                     if found:
                         break
-                        
             with open(self.area_locations_json, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
             logger.info("✅ Saved device locations to area_locations.json")
@@ -490,68 +423,12 @@ class DeviceLocationsDialog(QDialog):
     def reject(self):
         super().reject()
 
-class MapViewerDialog(QDialog):
-    def __init__(self, parent=None, available_markers=None, map_markers=None, mapping_dir=None):
-        super().__init__(parent)
-        self.available_markers = available_markers or {}
-        self.map_markers = map_markers or {}
-        self.mapping_dir = mapping_dir
-
-        self.setWindowTitle("Map Viewer")
-        self.resize(850, 750)
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(16, 16, 16, 16)
-        
-        layout.addWidget(QLabel("<b>Select Map:</b>"))
-        self.cmb_maps = QComboBox()
-        self.cmb_maps.setMinimumHeight(30)
-        layout.addWidget(self.cmb_maps)
-        
-        self.map_preview = MapPreviewWidget()
-        layout.addWidget(self.map_preview, stretch=1)
-        
-        layout.addWidget(QLabel("<b>Markers on this map:</b>"))
-        self.lbl_markers = QLabel("None")
-        self.lbl_markers.setWordWrap(True)
-        self.lbl_markers.setStyleSheet("background: #fff; padding: 8px; border: 1px solid #ccc;")
-        layout.addWidget(self.lbl_markers)
-        
-        self.cmb_maps.currentTextChanged.connect(self._on_map_changed)
-        maps = list(self.available_markers.keys())
-        if maps:
-            self.cmb_maps.addItems(maps)
-            self.cmb_maps.setCurrentIndex(0)
-            self._on_map_changed(maps[0])
-        else:
-            self.cmb_maps.addItem("No maps available")
-
-    def _on_map_changed(self, map_name):
-        if not map_name or map_name == "No maps available":
-            self.map_preview.set_map(QPixmap(), [])
-            self.lbl_markers.setText("No markers available.")
-            return
-            
-        img_path = os.path.join(self.mapping_dir, map_name) if self.mapping_dir else ""
-        markers = self.map_markers.get(map_name, [])
-        if os.path.exists(img_path):
-            self.map_preview.set_map(QPixmap(img_path), markers)
-        else:
-            self.map_preview.set_map(QPixmap(), markers)
-            
-        labels = [m.get("label") for m in markers if m.get("label")]
-        self.lbl_markers.setText(", ".join(labels) if labels else "No markers on this map.")
-
 class ProcessingWorker(QThread):
     finished_signal = Signal()
     error_signal = Signal(str)
     def __init__(self, incident_path):
         super().__init__()
         self.incident_path = incident_path
-
     def run(self):
         try:
             from datamanagement.importer import update_site_from_device_log

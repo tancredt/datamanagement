@@ -26,39 +26,41 @@ class MarkerInfoDialog(QDialog):
         self._lat = None
         self._lon = None
         self._setup_ui(default_label)
+
         if self.is_edit:
             self._populate(edit_data)
 
     def _setup_ui(self, default_label):
         layout = QVBoxLayout(self)
         form = QFormLayout()
-        
+
         self.lbl_label = QLineEdit(default_label)
         self.lbl_label.setPlaceholderText("A-Z, numbers, underscores only")
         if self.is_edit:
             self.lbl_label.setReadOnly(True)
             self.lbl_label.setStyleSheet("background-color: #f0f0f0; color: #555;")
-            
+
         self.txt_desc = QTextEdit()
         self.txt_desc.setMaximumHeight(60)
         self.txt_desc.setPlaceholderText("Optional description...")
-        
+
         form.addRow("Label:", self.lbl_label)
         form.addRow("Description:", self.txt_desc)
-        
+
         self.coord_group = QButtonGroup(self)
         self.rb_geo = QRadioButton("geo: URI")
         self.rb_latlon = QRadioButton("Latitude / Longitude")
         self.rb_geo.setChecked(True)
         self.coord_group.addButton(self.rb_geo, 0)
         self.coord_group.addButton(self.rb_latlon, 1)
-        
+
         radio_layout = QHBoxLayout()
         radio_layout.addWidget(self.rb_geo)
         radio_layout.addWidget(self.rb_latlon)
         form.addRow("Coordinates:", radio_layout)
-        
+
         self.stack = QStackedWidget()
+        
         page_geo = QWidget()
         geo_layout = QHBoxLayout(page_geo)
         geo_layout.setContentsMargins(0, 0, 0, 0)
@@ -66,7 +68,7 @@ class MarkerInfoDialog(QDialog):
         self.txt_geo.setPlaceholderText("geo:lat,lon?z=19 (Optional)")
         geo_layout.addWidget(self.txt_geo)
         self.stack.addWidget(page_geo)
-        
+
         page_latlon = QWidget()
         latlon_layout = QHBoxLayout(page_latlon)
         latlon_layout.setContentsMargins(0, 0, 0, 0)
@@ -81,12 +83,13 @@ class MarkerInfoDialog(QDialog):
         latlon_layout.addWidget(QLabel("Lon:"))
         latlon_layout.addWidget(self.txt_lon)
         self.stack.addWidget(page_latlon)
-        
+
         form.addRow("", self.stack)
         layout.addLayout(form)
-        
+
         self.btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         layout.addWidget(self.btn_box)
+
         self.btn_box.accepted.connect(self._validate_and_accept)
         self.btn_box.rejected.connect(self.reject)
         self.coord_group.idClicked.connect(lambda idx: self.stack.setCurrentIndex(idx))
@@ -94,6 +97,7 @@ class MarkerInfoDialog(QDialog):
     def _populate(self, data):
         self.lbl_label.setText(data.get("label", ""))
         self.txt_desc.setPlainText(data.get("description", "") or "")
+        
         coords = data.get("coordinates")
         if coords and coords.get("latitude") is not None and coords.get("longitude") is not None:
             lat, lon = coords["latitude"], coords["longitude"]
@@ -114,15 +118,27 @@ class MarkerInfoDialog(QDialog):
         if not new_label:
             QMessageBox.warning(self, "Validation Error", "Label cannot be empty.")
             return
+            
         if not re.match(r'^[A-Za-z0-9_]+$', new_label):
             QMessageBox.warning(self, "Validation Error", "Label must contain only letters, numbers, and underscores.")
             return
-        if not self.is_edit and new_label in self.current_map_labels:
-            QMessageBox.warning(self, "Duplicate Label", "This label has already been used globally across all maps and data types.")
-            return
             
+        # --- UPDATED DUPLICATE LABEL CHECK ---
+        if not self.is_edit and new_label in self.current_map_labels:
+            reply = QMessageBox.warning(
+                self, 
+                "Duplicate Label", 
+                "A marker with this label already exists. If you do reuse this label, make sure it is in the same spot.",
+                QMessageBox.Ok | QMessageBox.Cancel, 
+                QMessageBox.Cancel
+            )
+            if reply != QMessageBox.Ok:
+                return
+        # -------------------------------------
+
         mode = self.coord_group.checkedId()
         self._lat, self._lon = None, None
+        
         try:
             if mode == 0:
                 txt = self.txt_geo.text().strip()
@@ -139,6 +155,7 @@ class MarkerInfoDialog(QDialog):
                 raise ValueError("Latitude must be between -90 and 90.")
             if self._lon is not None and not (-180 <= self._lon <= 180):
                 raise ValueError("Longitude must be between -180 and 180.")
+                
             self.accept()
         except ValueError as e:
             QMessageBox.warning(self, "Validation Error", str(e))
@@ -188,6 +205,7 @@ class MapCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         if self.pixmap and not self.pixmap.isNull():
             painter.drawPixmap(0, 0, self.pixmap)
+        
         font = QFont("Arial", 10, QFont.Bold)
         painter.setFont(font)
         for m in self.markers:
@@ -213,6 +231,7 @@ class MapCanvas(QWidget):
                     self.setCursor(Qt.ArrowCursor)
                     self.marker_placed.emit()
                     return
+            
             if not self._is_dragging:
                 for i, m in enumerate(self.markers):
                     if (event.x() - m["x"])**2 + (event.y() - m["y"])**2 <= self._hit_threshold**2:
@@ -220,12 +239,14 @@ class MapCanvas(QWidget):
                         self._is_dragging = True
                         self.setCursor(Qt.ClosedHandCursor)
                         return
+                        
         elif event.button() == Qt.RightButton and self.pixmap and not self.pixmap.isNull() and not self._is_dragging:
             hit_idx = -1
             for i, m in enumerate(self.markers):
                 if (event.x() - m["x"])**2 + (event.y() - m["y"])**2 <= self._hit_threshold**2:
                     hit_idx = i
                     break
+            
             if hit_idx != -1:
                 menu = QMenu(self)
                 label = self.markers[hit_idx]["label"]
@@ -270,7 +291,7 @@ class MapEditorDialog(QDialog):
         self.manager.ensure_structure()
         self.maps_data = self.manager.get_maps_data()
         self.current_map_file = None
-        
+
         self.setWindowTitle(f"Map Editor - {mode.title()} Locations")
         self.resize(900, 700)
         self._setup_ui()
@@ -279,8 +300,8 @@ class MapEditorDialog(QDialog):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        top_toolbar = QHBoxLayout()
         
+        top_toolbar = QHBoxLayout()
         self.combo_maps = QComboBox()
         self.combo_maps.setMinimumWidth(200)
         self.combo_maps.currentTextChanged.connect(self._on_map_selected)
@@ -290,10 +311,12 @@ class MapEditorDialog(QDialog):
         self.btn_create_map.clicked.connect(self._open_create_map_url)
         
         self.btn_add_map = QPushButton("Add Map to Project...")
+        
         self.btn_export_map = QPushButton("Export Map...")
         self.btn_export_map.clicked.connect(self._on_export_map)
-        self.btn_place = QPushButton("Place Marker...")
         
+        self.btn_place = QPushButton("Place Marker...")
+
         top_toolbar.addWidget(QLabel("Active Map:"))
         top_toolbar.addWidget(self.combo_maps)
         top_toolbar.addWidget(self.btn_create_map)
@@ -301,15 +324,16 @@ class MapEditorDialog(QDialog):
         top_toolbar.addWidget(self.btn_export_map)
         top_toolbar.addStretch()
         top_toolbar.addWidget(self.btn_place)
-        layout.addLayout(top_toolbar)
         
+        layout.addLayout(top_toolbar)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(False)
         scroll.setAlignment(Qt.AlignCenter)
         self.canvas = MapCanvas()
         scroll.setWidget(self.canvas)
         layout.addWidget(scroll)
-        
+
         self.btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
         layout.addWidget(self.btn_box)
 
@@ -335,7 +359,7 @@ class MapEditorDialog(QDialog):
                 self.combo_maps.addItem(fname)
             else:
                 del self.maps_data[fname]
-        
+                
         if self.combo_maps.count() > 0:
             self.combo_maps.setCurrentIndex(0)
         else:
@@ -349,12 +373,13 @@ class MapEditorDialog(QDialog):
             self.canvas.markers = []
             self.canvas.update()
             return
-        
+
         if self.current_map_file and self.current_map_file in self.maps_data:
             self.maps_data[self.current_map_file] = list(self.canvas.markers)
-            
+
         self.current_map_file = filename
         self.canvas.markers = list(self.maps_data.get(filename, []))
+        
         pixmap_path = os.path.join(self.mapping_dir, filename)
         self.canvas.set_image(QPixmap(pixmap_path))
 
@@ -362,6 +387,7 @@ class MapEditorDialog(QDialog):
         self.btn_place.clicked.connect(self._on_place_marker)
         self.btn_add_map.clicked.connect(self._on_add_map)
         self.btn_box.accepted.connect(self.accept)
+        
         self.canvas.marker_edit_requested.connect(self._on_edit_marker)
         self.canvas.marker_deleted.connect(self._on_delete_marker)
         self.canvas.marker_placed.connect(self._save_data)
@@ -371,7 +397,7 @@ class MapEditorDialog(QDialog):
         if not self.current_map_file:
             QMessageBox.warning(self, "No Map", "Please add and select a map first.")
             return
-        
+
         all_used_labels = self.manager.get_all_used_labels()
         next_label = index_to_label(get_next_label_index(all_used_labels))
         
@@ -383,8 +409,8 @@ class MapEditorDialog(QDialog):
     def _on_edit_marker(self, idx):
         all_used_labels = self.manager.get_all_used_labels()
         marker = self.canvas.markers[idx]
-        dialog = MarkerInfoDialog(self, edit_data=marker, current_map_labels=all_used_labels)
         
+        dialog = MarkerInfoDialog(self, edit_data=marker, current_map_labels=all_used_labels)
         if dialog.exec() == QDialog.Accepted:
             new_data = dialog.get_data(mode=self.mode, existing_data=marker)
             new_label = new_data["label"]
@@ -396,10 +422,12 @@ class MapEditorDialog(QDialog):
                         m["label"] = new_label
                         m["description"] = new_data["description"]
                         m["coordinates"] = new_data["coordinates"]
+                        
                         if "device_log" in new_data:
                             for log_entry in new_data["device_log"]:
                                 log_entry["location"] = new_label
                             m["device_log"] = new_data["device_log"]
+                            
                         if "readings" in new_data:
                             m["readings"] = new_data["readings"]
                             
@@ -416,8 +444,10 @@ class MapEditorDialog(QDialog):
         
         fname = self.manager.add_map(path)
         self.maps_data = self.manager.get_maps_data()
+        
         self.combo_maps.addItem(fname)
         self.combo_maps.setCurrentText(fname)
+        
         self.canvas.markers = []
         self.canvas.update()
 
@@ -436,6 +466,7 @@ class MapEditorDialog(QDialog):
         if not self.current_map_file:
             QMessageBox.warning(self, "No Map", "Please select a map to export.")
             return
+
         default_name = os.path.splitext(self.current_map_file)[0] + "_marked.png"
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Export Map", default_name, "PNG Files (*.png);;JPEG Files (*.jpg);;All Files (*)"

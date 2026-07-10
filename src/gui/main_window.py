@@ -14,6 +14,7 @@ import json
 import logging
 import pandas as pd
 import numpy as np
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStatusBar, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QDialog, QFileDialog, QMessageBox, QProgressDialog,
@@ -50,7 +51,7 @@ from datamanagement.importer import copy_files_to_realtime, import_area_data
 from datamanagement.updater import update_site_from_device_log, update_validations
 
 # Reader and Locations
-from datamanagement.reader import read_area_data, read_spot_data, read_spectral_data
+from datamanagement.reader import read_area_data, read_spot_data, read_spectral_data, read_exposure_data
 from datamanagement.locations import LocationManager
 
 # Import shared metadata helpers
@@ -58,6 +59,15 @@ from datamanagement.choices import get_available_devices, get_available_location
 
 logger = logging.getLogger(__name__)
 
+# ─────────────────────────────────────────────────────────
+# VIEW CONSTRAINTS (Single source of truth for UI rules)
+# ─────────────────────────────────────────────────────────
+VIEW_CONSTRAINTS = {
+    "spot":     {"enabled": [0, 1, 2, 3, 4, 5], "default": 0},
+    "area":     {"enabled": [0, 1, 2, 3, 4, 5], "default": 0},
+    "spectral": {"enabled": [0, 1],             "default": 0},
+    "exposure": {"enabled": [3, 4],             "default": 3}
+}
 
 class CopyWorker(QObject):
     finished = Signal(int)
@@ -79,7 +89,6 @@ class CopyWorker(QObject):
         except Exception as e:
             self.error.emit(str(e))
 
-
 class ProcessWorker(QObject):
     finished = Signal(str)
     error = Signal(str)
@@ -99,7 +108,6 @@ class ProcessWorker(QObject):
         except Exception as e:
             self.error.emit(str(e))
 
-
 class DataAnalyzerGUI(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -107,38 +115,42 @@ class DataAnalyzerGUI(QMainWindow):
         self.resize(1200, 800)
 
         self._active_incident = None
-
+        
         # Data viewing state
         self.data_type = "spot"
         self.raw_data = None
         self.filtered_data = None
-
+        
         # Separate filter storage
         self.spot_filters = {}
         self.area_filters = {}
         self.spectral_filters = {}
+        self.exposure_filters = {}
+        
         self._spot_threshold_level = None
         self._area_threshold_level = None
         self._spectral_threshold_level = None
-
+        self._exposure_threshold_level = None
+        
         # Active filters
         self.filter_summary = {}
         self._selected_threshold_level = None
-
+        
         self.available_locations = []
         self.available_devices = []
         self.available_analytes = []
         self.analyte_dec_pls = {}
         self.thresholds_lookup = {}
-
+        
         self.maps_data = {}
         self.map_filenames = []
         self.mapping_dir = ""
-
+        
         self.area_data = None
         self.spot_data = None
         self.spectral_data = None
-
+        self.exposure_data = None
+        
         self._views_initialized = False
         self._last_data_type = None
 
@@ -163,24 +175,26 @@ class DataAnalyzerGUI(QMainWindow):
         if data is not None:
             self._load_analytes_config()
             self._load_overview_data()
-            self._load_spectral_data_for_overview()
-
+            
             if not self._views_initialized:
                 self._initialize_data_views()
                 self._views_initialized = True
-
+                
             self.overview_view.update_data(
                 self.area_data,
                 self.spot_data,
                 self.spectral_data,
+                self.exposure_data
             )
+            
             self.view_stack.setCurrentIndex(0)
             self.nav_btns[0].setChecked(True)
             self.central_stack.setCurrentIndex(1)
-
+            
             self.data_type_combo.blockSignals(True)
             self.data_type_combo.setCurrentText("Spot Readings")
             self.data_type_combo.blockSignals(False)
+            
             self._on_data_type_changed("Spot Readings")
 
     def _update_app_state(self, has_incident: bool):
@@ -189,7 +203,8 @@ class DataAnalyzerGUI(QMainWindow):
             self.action_import_area, self.action_map_area, self.action_device_locations,
             self.action_device_validations, self.action_battery, self.action_hotzone,
             self.action_warmzone, self.action_fireground, self.action_community,
-            self.action_publish, self.action_map_spectral, self.action_spectral_results
+            self.action_publish, self.action_map_spectral, self.action_spectral_results,
+            self.action_exposures
         ]
         for action in actions:
             action.setEnabled(has_incident)
@@ -227,7 +242,7 @@ class DataAnalyzerGUI(QMainWindow):
         self.data_page = QWidget()
         data_layout = QVBoxLayout(self.data_page)
         data_layout.setContentsMargins(0, 0, 0, 0)
-
+        
         self.view_stack = QStackedWidget()
         data_layout.addWidget(self.view_stack)
         self.central_stack.addWidget(self.data_page)
@@ -245,7 +260,7 @@ class DataAnalyzerGUI(QMainWindow):
         dock_layout.setSpacing(10)
 
         self.data_type_combo = QComboBox()
-        self.data_type_combo.addItems(["Spot Readings", "Area Readings", "Spectral Results"])
+        self.data_type_combo.addItems(["Spot Readings", "Area Readings", "Spectral Results", "Exposures"])
         self.data_type_combo.setMinimumHeight(35)
         self.data_type_combo.setStyleSheet("font-size: 13px; font-weight: bold;")
         self.data_type_combo.currentTextChanged.connect(self._on_data_type_changed)
@@ -279,7 +294,6 @@ class DataAnalyzerGUI(QMainWindow):
         self.filter_summary_group = QGroupBox("Filter Summary")
         fs_layout = QVBoxLayout(self.filter_summary_group)
         fs_layout.setContentsMargins(10, 15, 10, 10)
-
         labels = ["Time: --", "Interval: --", "Group: --", "Sites: --", "Devices: --", "Analytes: --"]
         self.filter_labels = []
         for text in labels:
@@ -287,7 +301,6 @@ class DataAnalyzerGUI(QMainWindow):
             lbl.setStyleSheet("font-weight: bold; color: #374151; font-size: 12px;")
             fs_layout.addWidget(lbl)
             self.filter_labels.append(lbl)
-
         dock_layout.addWidget(self.filter_summary_group)
         dock_layout.addSpacing(10)
 
@@ -310,7 +323,7 @@ class DataAnalyzerGUI(QMainWindow):
 
     def _setup_menus(self):
         menubar = self.menuBar()
-
+        
         file_menu = menubar.addMenu("&File")
         self.action_new_incident = file_menu.addAction("&New Incident", self._on_new_incident)
         self.action_new_incident.setShortcut(QKeySequence("Ctrl+N"))
@@ -337,6 +350,9 @@ class DataAnalyzerGUI(QMainWindow):
         spectral_menu = menubar.addMenu("&Spectral Records")
         self.action_map_spectral = spectral_menu.addAction("&Map...", self._on_map_spectral)
         self.action_spectral_results = spectral_menu.addAction("&Results...", self._on_spectral_results)
+
+        exposure_menu = menubar.addMenu("E&xposure Records")
+        self.action_exposures = exposure_menu.addAction("&Exposures...", self._on_exposures)
 
         reports_menu = menubar.addMenu("&Reports")
         self.action_hotzone = reports_menu.addAction("&Hotzone", self._on_report_hotzone)
@@ -388,13 +404,19 @@ class DataAnalyzerGUI(QMainWindow):
         elif self.data_type == "spectral":
             self.spectral_filters = self.filter_summary.copy() if self.filter_summary else {}
             self._spectral_threshold_level = self._selected_threshold_level
+        elif self.data_type == "exposure":
+            self.exposure_filters = self.filter_summary.copy() if self.filter_summary else {}
+            self._exposure_threshold_level = self._selected_threshold_level
 
         if "Spectral" in text:
             new_data_type = "spectral"
         elif "Spot" in text:
             new_data_type = "spot"
+        elif "Exposures" in text:
+            new_data_type = "exposure"
         else:
             new_data_type = "area"
+
         self.data_type = new_data_type
 
         # Restore state
@@ -403,20 +425,28 @@ class DataAnalyzerGUI(QMainWindow):
             self._selected_threshold_level = self._spot_threshold_level
         elif self.data_type == "area":
             self.filter_summary = self.area_filters.copy() if self.area_filters else {}
-            self._area_threshold_level = self._area_threshold_level
+            self._selected_threshold_level = self._area_threshold_level
         elif self.data_type == "spectral":
             self.filter_summary = self.spectral_filters.copy() if self.spectral_filters else {}
-            self._spectral_threshold_level = self._spectral_threshold_level
+            self._selected_threshold_level = self._spectral_threshold_level
+        elif self.data_type == "exposure":
+            self.filter_summary = self.exposure_filters.copy() if self.exposure_filters else {}
+            self._selected_threshold_level = self._exposure_threshold_level
 
-        # Handle dock navigation buttons for Spectral
-        is_spectral = (self.data_type == "spectral")
+        # ─────────────────────────────────────────────────────────
+        # CLEAN NAVIGATION BUTTON LOGIC
+        # ─────────────────────────────────────────────────────────
+        constraints = VIEW_CONSTRAINTS.get(self.data_type, VIEW_CONSTRAINTS["area"])
+        enabled_indices = constraints["enabled"]
+        default_idx = constraints["default"]
+
         for idx, btn in self.nav_btns.items():
-            if idx in [0, 1]:
-                btn.setEnabled(True)
-            else:
-                btn.setEnabled(not is_spectral)
-                if is_spectral and btn.isChecked():
-                    self.nav_btns[0].setChecked(True)
+            btn.setEnabled(idx in enabled_indices)
+
+        current_idx = self.view_stack.currentIndex()
+        if current_idx not in enabled_indices:
+            self.nav_btns[default_idx].setChecked(True)
+            self.view_stack.setCurrentIndex(default_idx)
 
         progress = QProgressDialog("Loading data...", None, 0, 0, self)
         progress.setWindowTitle("Loading")
@@ -435,20 +465,23 @@ class DataAnalyzerGUI(QMainWindow):
                 self._load_area_data()
             elif self.data_type == "spectral":
                 self._load_spectral_data()
+            # Exposures are loaded on-the-fly in _update_all_views
+
             QApplication.processEvents()
 
-            if self.data_type != "spectral":
+            if self.data_type not in ["spectral", "exposure"]:
                 self._load_map_data()
+
             QApplication.processEvents()
 
             if not self._views_initialized or self._last_data_type != self.data_type:
                 self._initialize_data_views()
                 self._views_initialized = True
+
             self._last_data_type = self.data_type
-
             self._apply_initial_filters()
-            QApplication.processEvents()
 
+            QApplication.processEvents()
             self.central_stack.setCurrentIndex(1)
             self._update_status_bar(f"📊 Loaded {self.data_type.title()} Data.")
         finally:
@@ -517,8 +550,7 @@ class DataAnalyzerGUI(QMainWindow):
     def _load_overview_data(self):
         self.area_data = read_area_data(self.active_incident_path)
         self.spot_data = read_spot_data(self.active_incident_path)
-
-    def _load_spectral_data_for_overview(self):
+        self.exposure_data = read_exposure_data(self.active_incident_path)
         self.spectral_data = read_spectral_data(self.active_incident_path)
 
     def _load_map_data(self):
@@ -565,24 +597,106 @@ class DataAnalyzerGUI(QMainWindow):
         self.view_stack.addWidget(self.summary_table_view)
         self.view_stack.addWidget(self.summary_chart_view)
         self.view_stack.addWidget(self.summary_map_view)
-
+        
         self.view_stack.setCurrentIndex(0)
         for idx, btn in self.nav_btns.items():
             btn.setChecked(idx == 0)
 
+    def _process_exposure_data(self):
+        """Read exposures.json, apply filters using standard filtering.py, and format for summary views."""
+        exposure_df = read_exposure_data(self.active_incident_path)
+        if exposure_df.empty:
+            self.filtered_data = pd.DataFrame()
+            self._update_all_views()
+            return
+
+        # Reuse the robust filter_data function instead of manual filtering
+        self.filtered_data = filter_data(
+            df=exposure_df,
+            start_dt=self.filter_summary.get('start_time'),
+            stop_dt=self.filter_summary.get('stop_time'),
+            selected_sites=self.filter_summary.get('selected_sites', []),
+            selected_devices=self.filter_summary.get('selected_devices', []),
+            selected_analytes=self.filter_summary.get('selected_analytes', []),
+            only_valid=False,
+            group_by='Device',
+            data_type="exposure"
+        )
+
+        if self.filtered_data is not None and not self.filtered_data.empty and 'LOG TIME' in self.filtered_data.columns:
+            self.filtered_data = self.filtered_data.sort_values(by='LOG TIME')
+            
+        self._update_all_views()
+
     def _apply_initial_filters(self):
+        # ── SPECIAL HANDLING FOR EXPOSURES ──
+        if self.data_type == "exposure":
+            exposure_df = read_exposure_data(self.active_incident_path)
+            self.raw_data = exposure_df
+            
+            if not exposure_df.empty and 'LOG TIME' in exposure_df.columns:
+                data_start = exposure_df['LOG TIME'].min()
+                data_stop = exposure_df['LOG TIME'].max()
+            else:
+                data_start = pd.Timestamp.now()
+                data_stop = pd.Timestamp.now()
+
+            if not self.filter_summary:
+                self.filter_summary = {
+                    "start_time": data_start,
+                    "stop_time": data_stop,
+                    "interval": "Raw",
+                    "group_by": "Device",
+                    "only_valid": False,
+                    "selected_sites": exposure_df['SITE'].dropna().unique().tolist() if 'SITE' in exposure_df.columns else [],
+                    "selected_devices": exposure_df['DEVICE'].dropna().unique().tolist() if 'DEVICE' in exposure_df.columns else [],
+                    "selected_analytes": list(self.available_analytes),
+                    "threshold_level": None,
+                    "data_type": "exposure"
+                }
+            else:
+                self.filter_summary["data_type"] = "exposure"
+                
+                # Validate Devices
+                if 'DEVICE' in exposure_df.columns:
+                    valid_devs = exposure_df['DEVICE'].dropna().unique().tolist()
+                    old_devices = self.filter_summary.get('selected_devices', [])
+                    valid_devices = [d for d in old_devices if d in valid_devs]
+                    self.filter_summary['selected_devices'] = valid_devices if valid_devices else valid_devs
+                else:
+                    self.filter_summary['selected_devices'] = []
+
+                # Validate Sites (Areas)
+                if 'SITE' in exposure_df.columns:
+                    valid_sites = exposure_df['SITE'].dropna().unique().tolist()
+                    old_sites = self.filter_summary.get('selected_sites', [])
+                    valid_sites_list = [s for s in old_sites if s in valid_sites]
+                    self.filter_summary['selected_sites'] = valid_sites_list if valid_sites_list else valid_sites
+                else:
+                    self.filter_summary['selected_sites'] = []
+
+                # Validate Analytes
+                old_analytes = self.filter_summary.get('selected_analytes', [])
+                valid_analytes = [g for g in old_analytes if g in self.available_analytes]
+                self.filter_summary['selected_analytes'] = valid_analytes if valid_analytes else list(self.available_analytes)
+
+            self.exposure_filters = self.filter_summary.copy()
+            self._exposure_threshold_level = self._selected_threshold_level
+            self._process_exposure_data()
+            return
+
+        # ── STANDARD HANDLING FOR SPOT, AREA, SPECTRAL ──
         if self.raw_data is None or self.raw_data.empty:
             self._load_overview_data()
-            self._load_spectral_data_for_overview()
             self.overview_view.update_data(
                 self.area_data,
                 self.spot_data,
                 self.spectral_data,
+                self.exposure_data
             )
             return
 
         df = self.raw_data.copy()
-
         if 'LOG TIME' in df.columns and not df['LOG TIME'].dropna().empty:
             data_start = df['LOG TIME'].min()
             data_stop = df['LOG TIME'].max()
@@ -640,10 +754,10 @@ class DataAnalyzerGUI(QMainWindow):
         if self.filtered_data is not None and not self.filtered_data.empty:
             if 'LOG TIME' in self.filtered_data.columns:
                 self.filtered_data = self.filtered_data.sort_values(by='LOG TIME')
-            
+
             interval = self.filter_summary.get("interval", "Raw")
             group_by = self.filter_summary.get("group_by", "Device")
-            
+
             if interval != "Raw":
                 start = self.filter_summary['start_time']
                 stop = self.filter_summary['stop_time']
@@ -658,7 +772,7 @@ class DataAnalyzerGUI(QMainWindow):
                     self.filtered_data = self.filtered_data.drop(columns=["SITE"])
                 elif group_by == "Site" and "DEVICE" in self.filtered_data.columns:
                     self.filtered_data = self.filtered_data.drop(columns=["DEVICE"])
-                    
+
             self.filtered_data = self._reorder_columns(self.filtered_data)
 
         self._update_all_views()
@@ -667,14 +781,13 @@ class DataAnalyzerGUI(QMainWindow):
         if self.filtered_data is None:
             return
 
-        self._load_overview_data()
-        self._load_spectral_data_for_overview()
-
-        self.overview_view.update_data(
-            self.area_data,
-            self.spot_data,
-            self.spectral_data,
-        )
+        if self.data_type == "exposure":
+            # For exposures, only show summary views
+            active_thresholds = self._get_active_thresholds()
+            self.summary_table_view.update_data(self.filtered_data, self.filter_summary, self.available_analytes, self._get_active_thresholds)
+            self.summary_chart_view.update_data(self.summary_table_view.get_summary_data(), self.filter_summary, active_thresholds)
+            self._update_filter_summary_labels()
+            return
 
         if self.data_type == "spectral":
             self.table_view.set_data(self.filtered_data, show_invalid_bg=False, active_thresholds={})
@@ -683,16 +796,19 @@ class DataAnalyzerGUI(QMainWindow):
 
         only_valid = self.filter_summary.get("only_valid", False)
         active_thresholds = self._get_active_thresholds()
+
         self.table_view.set_data(self.filtered_data, show_invalid_bg=not only_valid, active_thresholds=active_thresholds)
         self.chart_view.plot_data(self.filtered_data, self.filter_summary, self.available_analytes, self._get_active_thresholds)
         self.summary_table_view.update_data(self.filtered_data, self.filter_summary, self.available_analytes, self._get_active_thresholds)
         self.summary_chart_view.update_data(self.summary_table_view.get_summary_data(), self.filter_summary, active_thresholds)
         self.summary_map_view.update_data(self.filtered_data)
+        
         self._update_filter_summary_labels()
 
     def _get_active_thresholds(self):
         if not self._selected_threshold_level:
             return {}
+        
         result = {}
         for analyte in self.available_analytes:
             analyte_upper = analyte.upper()
@@ -705,19 +821,24 @@ class DataAnalyzerGUI(QMainWindow):
     def _reorder_columns(self, df):
         if df is None or df.empty:
             return df
+        
         ordered = []
         for col in ['LOG TIME', 'SITE', 'DEVICE', 'observations']:
             if col in df.columns:
                 ordered.append(col)
+                
         for analyte in self.available_analytes:
             if analyte in df.columns and analyte not in ordered:
                 ordered.append(analyte)
+                
         for col in df.columns:
             if col.upper().startswith('INVALID_') and col not in ordered:
                 ordered.append(col)
+                
         for col in df.columns:
             if col not in ordered:
                 ordered.append(col)
+                
         return df[ordered]
 
     # ─────────────────────────────────────────────────────────
@@ -725,19 +846,31 @@ class DataAnalyzerGUI(QMainWindow):
     # ─────────────────────────────────────────────────────────
     @Slot(int)
     def _on_nav_clicked(self, index):
-        if self.data_type == "spectral" and index > 1:
-            index = 0
+        constraints = VIEW_CONSTRAINTS.get(self.data_type, VIEW_CONSTRAINTS["area"])
+        if index not in constraints["enabled"]:
+            index = constraints["default"]
+            self.nav_btns[index].setChecked(True)
         self.view_stack.setCurrentIndex(index)
 
     def _open_filter_dialog(self):
-        if self.raw_data is None or self.raw_data.empty:
-            QMessageBox.warning(self, "No Data", "No data loaded to filter.")
-            return
+        # ── SPECIAL HANDLING FOR EXPOSURES ──
+        if self.data_type == "exposure":
+            exposure_df = read_exposure_data(self.active_incident_path)
+            self.raw_data = exposure_df
+            if exposure_df.empty:
+                QMessageBox.warning(self, "No Data", "No exposure data available.")
+                return
+            raw_data_for_dialog = exposure_df
+        else:
+            if self.raw_data is None or self.raw_data.empty:
+                QMessageBox.warning(self, "No Data", "No data loaded to filter.")
+                return
+            raw_data_for_dialog = self.raw_data
 
         dialog = FilterDialog(
             parent=self,
             incident_path=self.active_incident_path,
-            raw_data=self.raw_data,
+            raw_data=raw_data_for_dialog,
             analyte_dec_pls=self.analyte_dec_pls,
             thresholds_lookup=self.thresholds_lookup,
             initial_filters=self.filter_summary,
@@ -746,6 +879,16 @@ class DataAnalyzerGUI(QMainWindow):
 
         if dialog.exec() == QDialog.Accepted:
             new_filters = dialog.get_filters()
+
+            # ── SPECIAL HANDLING FOR EXPOSURES ──
+            if self.data_type == "exposure":
+                self.filter_summary = new_filters
+                self.exposure_filters = self.filter_summary.copy()
+                self._exposure_threshold_level = self._selected_threshold_level = new_filters['threshold_level']
+                self.thresholds_lookup = dialog.thresholds_lookup
+                self._process_exposure_data()
+                self._update_filter_summary_labels()
+                return
 
             self.filtered_data = filter_data(
                 df=self.raw_data,
@@ -762,10 +905,10 @@ class DataAnalyzerGUI(QMainWindow):
             if self.filtered_data is not None and not self.filtered_data.empty:
                 if 'LOG TIME' in self.filtered_data.columns:
                     self.filtered_data = self.filtered_data.sort_values(by='LOG TIME')
-                
+
                 interval = new_filters.get("interval", "Raw")
                 group_by = new_filters.get("group_by", "Device")
-                
+
                 if interval != "Raw":
                     start = new_filters['start_time']
                     stop = new_filters['stop_time']
@@ -780,7 +923,7 @@ class DataAnalyzerGUI(QMainWindow):
                         self.filtered_data = self.filtered_data.drop(columns=["SITE"])
                     elif group_by == "Site" and "DEVICE" in self.filtered_data.columns:
                         self.filtered_data = self.filtered_data.drop(columns=["DEVICE"])
-                        
+
                 self.filtered_data = self._reorder_columns(self.filtered_data)
 
             self._selected_threshold_level = new_filters['threshold_level']
@@ -816,20 +959,25 @@ class DataAnalyzerGUI(QMainWindow):
             stop_t = stop_t.strftime("%Y-%m-%d %H:%M")
 
         interval_text = summary.get('interval', '--')
-        if self.data_type == "spectral":
+        if self.data_type in ["spectral", "exposure"]:
             interval_text = "Raw (N/A)"
 
         analytes_count = len(summary.get('selected_analytes', []))
         analytes_text = "N/A" if self.data_type == "spectral" else str(analytes_count)
 
+        is_exposure = self.data_type == "exposure"
+        site_label = "Areas" if is_exposure else "Sites"
+        device_label = "Identifiers" if is_exposure else "Devices"
+
         texts = [
             f"Time: {start_t} to {stop_t}",
             f"Interval: {interval_text}",
             f"Group: {summary.get('group_by', '--')}",
-            f"Sites: {len(summary.get('selected_sites', []))}",
-            f"Devices: {len(summary.get('selected_devices', []))}",
+            f"{site_label}: {len(summary.get('selected_sites', []))}",
+            f"{device_label}: {len(summary.get('selected_devices', []))}",
             f"Analytes: {analytes_text}"
         ]
+
         for lbl, text in zip(self.filter_labels, texts):
             lbl.setText(text)
 
@@ -882,11 +1030,11 @@ class DataAnalyzerGUI(QMainWindow):
 
         self._load_analytes_config()
         self._load_overview_data()
-        self._load_spectral_data_for_overview()
         self.overview_view.update_data(
             self.area_data,
             self.spot_data,
             self.spectral_data,
+            self.exposure_data
         )
 
     # ─────────────────────────────────────────────────────────
@@ -1011,6 +1159,22 @@ class DataAnalyzerGUI(QMainWindow):
                 self._on_data_type_changed("Spectral Results")
 
     @Slot()
+    def _on_exposures(self):
+        if not self.active_incident_path:
+            return
+        from exposure_dialog import ExposuresDialog
+        dialog = ExposuresDialog(
+            self, 
+            self.active_incident_path, 
+            available_analytes=self.available_analytes, 
+            analyte_dec_pls=self.analyte_dec_pls
+        )
+        if dialog.exec() == QDialog.Accepted:
+            self._update_status_bar("💾 Exposures saved.")
+            if self.data_type == "exposure":
+                self._on_data_type_changed("Exposures")
+
+    @Slot()
     def _on_device_locations(self):
         if not self.active_incident_path:
             return
@@ -1071,7 +1235,6 @@ class DataAnalyzerGUI(QMainWindow):
             self.copy_progress.close()
             self.copy_progress.deleteLater()
             self.copy_progress = None
-
         if hasattr(self, 'copy_thread') and self.copy_thread:
             self.copy_thread.quit()
             self.copy_thread.wait()
@@ -1120,7 +1283,6 @@ class DataAnalyzerGUI(QMainWindow):
             self.process_progress.close()
             self.process_progress.deleteLater()
             self.process_progress = None
-
         if hasattr(self, 'process_thread') and self.process_thread:
             self.process_thread.quit()
             self.process_thread.wait()
@@ -1176,7 +1338,6 @@ class DataAnalyzerGUI(QMainWindow):
                     except RuntimeError:
                         pass
         super().closeEvent(event)
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)-8s| %(message)s")

@@ -27,7 +27,7 @@ class SummaryTableView(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-
+        
         self.summary_table = QTableWidget()
         self.summary_table.setColumnCount(6)
         self.summary_table.setHorizontalHeaderLabels(["Group", "Analyte", "Minimum", "Maximum", "Mean", "Count"])
@@ -37,7 +37,7 @@ class SummaryTableView(QWidget):
         self.summary_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.summary_table.setSortingEnabled(True)
         layout.addWidget(self.summary_table)
-
+        
         bottom_layout = QHBoxLayout()
         self.btn_export_summary = QPushButton("Export Summary CSV")
         self.btn_export_summary.setMinimumHeight(32)
@@ -56,13 +56,29 @@ class SummaryTableView(QWidget):
             return
 
         df = filtered_data.copy()
-        selected_analytes = filter_summary.get("selected_analytes", available_analytes)
-        valid_analytes = [g for g in selected_analytes if g in df.columns]        
+        is_exposure = filter_summary.get("data_type") == "exposure"
+        
+        # Determine grouping column and label
+        if is_exposure:
+            group_col = 'DEVICE'
+            group_by_label = "Identifier"
+        else:
+            group_by = filter_summary.get("group_by", "Device")
+            group_col = 'DEVICE' if group_by == "Device" else 'SITE'
+            group_by_label = group_by
 
-        group_by = filter_summary.get("group_by", "Device")
-        group_col = 'DEVICE' if group_by == "Device" else 'SITE'
+        # Determine valid analytes
+        if is_exposure:
+            # For exposures, an analyte is valid if it has pre-calculated min/max/mean columns
+            valid_analytes = []
+            for g in available_analytes:
+                if f"{g}_min" in df.columns or f"{g}_max" in df.columns or f"{g}_mean" in df.columns:
+                    valid_analytes.append(g)
+        else:
+            selected_analytes = filter_summary.get("selected_analytes", available_analytes)
+            valid_analytes = [g for g in selected_analytes if g in df.columns]
 
-        self.summary_table.setHorizontalHeaderLabels([group_by, "Analyte", "Minimum", "Maximum", "Mean", "Count"])
+        self.summary_table.setHorizontalHeaderLabels([group_by_label, "Analyte", "Minimum", "Maximum", "Mean", "Count"])
 
         if group_col in df.columns:
             groups = df[group_col].dropna().unique()
@@ -78,46 +94,67 @@ class SummaryTableView(QWidget):
                 group_df = df
 
             for analyte in valid_analytes:
-                if analyte in group_df.columns:
-                    analyte_data = group_df[analyte].dropna()
-                    count_val = len(analyte_data)
-
-                    if count_val > 0:
-                        min_val = analyte_data.min()
-                        max_val = analyte_data.max()
-                        mean_val = analyte_data.mean()
+                if is_exposure:
+                    # Extract pre-calculated values directly from the exposure record
+                    min_col = f"{analyte}_min"
+                    max_col = f"{analyte}_max"
+                    mean_col = f"{analyte}_mean"
+                    
+                    min_v = group_df[min_col].iloc[0] if min_col in group_df.columns and not group_df[min_col].empty else np.nan
+                    max_v = group_df[max_col].iloc[0] if max_col in group_df.columns and not group_df[max_col].empty else np.nan
+                    mean_v = group_df[mean_col].iloc[0] if mean_col in group_df.columns and not group_df[mean_col].empty else np.nan
+                    
+                    count_val = len(group_df)
+                    
+                    # Only add row if there's actual data for this analyte
+                    if pd.notna(min_v) or pd.notna(max_v) or pd.notna(mean_v):
                         dec_pls = self.analyte_dec_pls.get(analyte, 2)
-
                         rows_data.append((
                             str(group_val), analyte,
-                            float(min_val), float(max_val), float(mean_val),
+                            float(min_v) if pd.notna(min_v) else np.nan,
+                            float(max_v) if pd.notna(max_v) else np.nan,
+                            float(mean_v) if pd.notna(mean_v) else np.nan,
                             int(count_val), dec_pls
                         ))
+                else:
+                    # Standard calculation for raw Area/Spot data
+                    if analyte in group_df.columns:
+                        analyte_data = group_df[analyte].dropna()
+                        count_val = len(analyte_data)
+                        if count_val > 0:
+                            min_val = analyte_data.min()
+                            max_val = analyte_data.max()
+                            mean_val = analyte_data.mean()
+                            dec_pls = self.analyte_dec_pls.get(analyte, 2)
+                            rows_data.append((
+                                str(group_val), analyte,
+                                float(min_val), float(max_val), float(mean_val),
+                                int(count_val), dec_pls
+                            ))
 
         self.summary_table.setSortingEnabled(False)
         self.summary_table.setRowCount(len(rows_data))
-
         active_thresholds = get_active_thresholds_func()
-
+        
         for row, (grp, analyte, min_v, max_v, mean_v, count_v, dec_pls) in enumerate(rows_data):
             self.summary_table.setItem(row, 0, QTableWidgetItem(grp))
             self.summary_table.setItem(row, 1, QTableWidgetItem(analyte))
-
-            min_item = NumericTableWidgetItem(f"{min_v:.{dec_pls}f}")
-            if self._is_value_exceeding_threshold(analyte, min_v, active_thresholds):
+            
+            min_item = NumericTableWidgetItem(f"{min_v:.{dec_pls}f}" if pd.notna(min_v) else "")
+            if pd.notna(min_v) and self._is_value_exceeding_threshold(analyte, min_v, active_thresholds):
                 min_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
             self.summary_table.setItem(row, 2, min_item)
-
-            max_item = NumericTableWidgetItem(f"{max_v:.{dec_pls}f}")
-            if self._is_value_exceeding_threshold(analyte, max_v, active_thresholds):
+            
+            max_item = NumericTableWidgetItem(f"{max_v:.{dec_pls}f}" if pd.notna(max_v) else "")
+            if pd.notna(max_v) and self._is_value_exceeding_threshold(analyte, max_v, active_thresholds):
                 max_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
             self.summary_table.setItem(row, 3, max_item)
-
-            mean_item = NumericTableWidgetItem(f"{mean_v:.{dec_pls}f}")
-            if self._is_value_exceeding_threshold(analyte, mean_v, active_thresholds):
+            
+            mean_item = NumericTableWidgetItem(f"{mean_v:.{dec_pls}f}" if pd.notna(mean_v) else "")
+            if pd.notna(mean_v) and self._is_value_exceeding_threshold(analyte, mean_v, active_thresholds):
                 mean_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
             self.summary_table.setItem(row, 4, mean_item)
-
+            
             self.summary_table.setItem(row, 5, NumericTableWidgetItem(str(count_v)))
 
         self.summary_table.setSortingEnabled(True)
@@ -144,21 +181,17 @@ class SummaryTableView(QWidget):
         if not self.summary_data:
             QMessageBox.warning(self, "No Data", "There is no summary data to export.")
             return
-            
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Export Summary to CSV", "summary_data.csv", "CSV Files (*.csv);;All Files (*)"
         )
-        
         if file_path:
             try:
                 df = pd.DataFrame(self.summary_data, columns=['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count', 'DecPls'])
-                
                 for col in ['Min', 'Max', 'Mean']:
-                    df[col] = df.apply(lambda row: f"{row[col]:.{row['DecPls']}f}", axis=1)
-                
+                    # Handle NaN values gracefully during string formatting
+                    df[col] = df.apply(lambda row: f"{row[col]:.{row['DecPls']}f}" if pd.notna(row[col]) else "", axis=1)
                 df.drop(columns=['DecPls'], inplace=True)
                 df.rename(columns={'Group': group_by_name}, inplace=True)
-                
                 df.to_csv(file_path, index=False)
                 QMessageBox.information(self, "Success", f"Summary exported successfully to:\n{file_path}")
             except Exception as e:

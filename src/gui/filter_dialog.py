@@ -23,8 +23,8 @@ if parent_dir not in sys.path:
 
 logger = logging.getLogger(__name__)
 
-DATE_FORMAT = "yyyy-MM-dd HH:mm "
-INTERVAL_OPTIONS = ["Raw", "5", "15", "30", "60", "120", "240", "480", "1440"]
+DATE_FORMAT =  "yyyy-MM-dd HH:mm   "
+INTERVAL_OPTIONS = [ "Raw ",  "5 ",  "15 ",  "30 ",  "60 ",  "120 ",  "240 ",  "480 ",  "1440 "]
 
 class FilterGroup(QGroupBox):
     def __init__(self, title, parent=None):
@@ -96,7 +96,6 @@ class FilterGroup(QGroupBox):
         for cb in self.checkboxes:
             cb.setEnabled(enabled)
 
-
 class ThresholdsDialog(QDialog):
     def __init__(self, parent, incident_path):
         super().__init__(parent)
@@ -108,6 +107,7 @@ class ThresholdsDialog(QDialog):
 
         self.available_analytes = []
         self._load_available_analytes()
+
         self.thresholds_data = []
         self._load_thresholds()
 
@@ -130,14 +130,7 @@ class ThresholdsDialog(QDialog):
                 logger.error(f"Failed to load analytes: {e}")
 
     def _load_thresholds(self):
-        os.makedirs(self.meta_dir, exist_ok=True)
-        if not os.path.exists(self.thresholds_file):
-            if os.path.exists(self.static_thresholds_file):
-                try:
-                    shutil.copy(self.static_thresholds_file, self.thresholds_file)
-                except Exception as e:
-                    logger.error(f"Failed to copy thresholds: {e}")
-
+        # Only read the file if it exists. Creation is handled by incident_dialog.py
         if os.path.exists(self.thresholds_file):
             try:
                 with open(self.thresholds_file, 'r', encoding='utf-8') as f:
@@ -151,6 +144,7 @@ class ThresholdsDialog(QDialog):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Analyte", "Hotzone", "Warmzone", "Fireground", "Community"])
@@ -193,10 +187,12 @@ class ThresholdsDialog(QDialog):
     def _on_add(self):
         analyte = self.cmb_add_analyte.currentText().strip()
         if not analyte: return
+
         for t in self.thresholds_data:
             if t.get("analyte", "").strip().upper() == analyte.upper():
                 QMessageBox.warning(self, "Duplicate", "Threshold for this analyte already exists.")
                 return
+
         self.thresholds_data.append({
             "analyte": analyte, "hotzone_value": "0.0",
             "warmzone_value": "0.0", "fireground_value": "0.0", "community_value": "0.0"
@@ -213,23 +209,26 @@ class ThresholdsDialog(QDialog):
         for row in range(self.table.rowCount()):
             analyte_item = self.table.item(row, 0)
             if not analyte_item: continue
+
             analyte = analyte_item.text()
             t = next((x for x in self.thresholds_data if x.get("analyte") == analyte), None)
             if not t:
                 t = {"analyte": analyte}
                 self.thresholds_data.append(t)
+
             for col, key in enumerate(["hotzone_value", "warmzone_value", "fireground_value", "community_value"], start=1):
                 item = self.table.item(row, col)
                 t[key] = item.text() if item else ""
 
         try:
+            # Ensure directory exists before saving, just as a safety measure
+            os.makedirs(self.meta_dir, exist_ok=True)
             with open(self.thresholds_file, 'w', encoding='utf-8') as f:
                 json.dump({"thresholds": self.thresholds_data}, f, indent=1)
             QMessageBox.information(self, "Saved", "Thresholds saved successfully.")
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save thresholds:\n{e}")
-
 
 class FilterDialog(QDialog):
     def __init__(self, parent=None, incident_path=None, raw_data=None,
@@ -247,9 +246,24 @@ class FilterDialog(QDialog):
         # Load thresholds from the incident's meta directory
         self._reload_thresholds()
 
-        # Handle Spectral metadata loading
+        # Handle metadata loading based on data type
         if self.data_type == "spectral":
             self.available_devices, self.available_locations = self._load_spectral_metadata()
+        elif self.data_type == "exposure":
+            # Extract unique Identifiers and Areas directly from the raw_data
+            if self.raw_data is not None:
+                if 'DEVICE' in self.raw_data.columns:
+                    self.available_devices = sorted([str(d) for d in self.raw_data['DEVICE'].dropna().unique().tolist() if str(d).strip()])
+                else:
+                    self.available_devices = []
+                
+                if 'SITE' in self.raw_data.columns:
+                    self.available_locations = sorted([str(s) for s in self.raw_data['SITE'].dropna().unique().tolist() if str(s).strip()])
+                else:
+                    self.available_locations = []
+            else:
+                self.available_devices = []
+                self.available_locations = []
         else:
             self.available_devices = get_available_devices(self.incident_path, self.data_type)
             self.available_locations = get_available_locations(self.incident_path, self.data_type)
@@ -304,8 +318,8 @@ class FilterDialog(QDialog):
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel("<b>Group By:</b>"))
         self.group_by_combo = QComboBox()
-        self.group_by_combo.addItems(["Device", "Site"])
-        self.group_by_combo.setCurrentText("Device")
+        self.group_by_combo.addItems(["Identifier", "Site"]) 
+        self.group_by_combo.setCurrentText("Identifier")
         self.group_by_combo.setMinimumWidth(120)
         self.group_by_combo.currentTextChanged.connect(self._on_group_by_changed)
         top_row.addWidget(self.group_by_combo)
@@ -316,10 +330,9 @@ class FilterDialog(QDialog):
         self.threshold_combo.addItems(["No Threshold", "Hotzone", "Warmzone", "Fireground", "Community"])
         self.threshold_combo.setCurrentText("No Threshold")
         self.threshold_combo.setMinimumWidth(140)
-        
+
         self.btn_thresholds = QPushButton("Thresholds...")
         self.btn_thresholds.clicked.connect(self._on_open_thresholds)
-
         top_row.addWidget(self.threshold_combo)
         top_row.addWidget(self.btn_thresholds)
         layout.addLayout(top_row)
@@ -351,8 +364,8 @@ class FilterDialog(QDialog):
         filters_row = QHBoxLayout()
         self.site_group = FilterGroup("Sites")
         filters_row.addWidget(self.site_group)
-
-        self.device_group = FilterGroup("Devices")
+        
+        self.device_group = FilterGroup("Identifier") 
         filters_row.addWidget(self.device_group)
 
         self.analyte_group = FilterGroup("Analytes")
@@ -373,10 +386,9 @@ class FilterDialog(QDialog):
         btn_row.addWidget(self.btn_cancel)
         layout.addLayout(btn_row)
 
-        # UPDATED: Disable everything except Start/Stop times and Dialog buttons for Spectral
+        # Handle UI state based on data type
         if self.data_type == "spectral":
             self.group_by_combo.setEnabled(False)
-            # Enable threshold selection for spectral data
             self.threshold_combo.setEnabled(True)
             self.btn_thresholds.setEnabled(True)
             self.interval_combo.setEnabled(False)
@@ -385,13 +397,27 @@ class FilterDialog(QDialog):
             self.device_group.set_enabled(False)
             self.analyte_group.setVisible(False)
             self.analyte_group.setEnabled(False)
-        # NEW: Disable "Only Valid" for Spot Readings
+        elif self.data_type == "exposure":
+            # Enable Group By so user can choose to filter by Area or Identifier
+            self.group_by_combo.setEnabled(True)
+            self.group_by_combo.setCurrentText("Identifier")
+            self.interval_combo.setEnabled(False)
+            self.only_valid_cb.setEnabled(False)
+            self.site_group.setVisible(True)
+            self.device_group.setVisible(True)
+            
+            # Update labels for exposure data
+            self.site_group.setTitle("Areas:")
+            self.device_group.setTitle("Identifiers:")
+            
+            # Trigger the initial enable/disable state of the filter groups
+            self._on_group_by_changed("Identifier")
         elif self.data_type == "spot":
             self.only_valid_cb.setEnabled(False)
             self.only_valid_cb.setChecked(False)
 
     def _on_group_by_changed(self, group_by_text):
-        if group_by_text == "Device":
+        if group_by_text == "Identifier": 
             self.site_group.set_enabled(False)
             self.device_group.set_enabled(True)
         elif group_by_text == "Site":
@@ -401,21 +427,34 @@ class FilterDialog(QDialog):
     def _populate_filters(self):
         self._set_time_range()
 
-        self.site_group.clear()
-        self.site_group.add_checkbox("Unassigned", checked=True)
-        for loc in self.available_locations:
-            self.site_group.add_checkbox(loc, checked=True)
-
+        # 1. Populate Identifiers (Devices)
         self.device_group.clear()
-        for device in self.available_devices:
-            self.device_group.add_checkbox(device, checked=True)
+        if self.data_type == "exposure":
+            for id_val in self.available_devices:
+                self.device_group.add_checkbox(id_val, checked=True)
+        else:
+            for device in self.available_devices:
+                self.device_group.add_checkbox(device, checked=True)
 
-        self.analyte_group.clear()
+        # 2. Populate Sites (For everything EXCEPT spectral)
         if self.data_type != "spectral":
+            self.site_group.clear()
+            if self.data_type == "exposure":
+                # For exposures, just add the valid areas found in the data
+                for loc in self.available_locations:
+                    self.site_group.add_checkbox(loc, checked=True)
+            else:
+                self.site_group.add_checkbox("Unassigned", checked=True)
+                for loc in self.available_locations:
+                    self.site_group.add_checkbox(loc, checked=True)
+
+        # 3. Populate Analytes (For everything EXCEPT spectral)
+        if self.data_type != "spectral":
+            self.analyte_group.clear()
             for analyte in self.available_analytes:
                 self.analyte_group.add_checkbox(analyte, checked=True)
 
-        # Apply initial filters if provided
+        # 4. Apply initial filters if provided
         if self.initial_filters:
             start = self.initial_filters.get('start_time')
             if start:
@@ -424,7 +463,7 @@ class FilterDialog(QDialog):
                 elif isinstance(start, str) and start != "All":
                     dt = QDateTime.fromString(start, DATE_FORMAT)
                     if dt.isValid(): self.start_time_edit.setDateTime(dt)
-                    
+
             stop = self.initial_filters.get('stop_time')
             if stop:
                 if isinstance(stop, datetime):
@@ -438,8 +477,10 @@ class FilterDialog(QDialog):
 
             group_by = self.initial_filters.get('group_by')
             if group_by:
-                self.group_by_combo.setCurrentText(group_by)
-                self._on_group_by_changed(group_by)
+                # Map "Device" from old filters back to "Identifier" for the UI
+                ui_group_by = "Identifier" if group_by == "Device" else group_by
+                self.group_by_combo.setCurrentText(ui_group_by)
+                self._on_group_by_changed(ui_group_by)
 
             self.only_valid_cb.setChecked(self.initial_filters.get('only_valid', False))
 
@@ -448,11 +489,15 @@ class FilterDialog(QDialog):
                 level_map = {"hotzone_value": "Hotzone", "warmzone_value": "Warmzone", "fireground_value": "Fireground", "community_value": "Community"}
                 self.threshold_combo.setCurrentText(level_map.get(threshold, "No Threshold"))
 
-            if 'selected_sites' in self.initial_filters:
-                self.site_group.set_checked_items(self.initial_filters['selected_sites'])
+            # Restore checked items based on what is visible/enabled
             if 'selected_devices' in self.initial_filters:
                 self.device_group.set_checked_items(self.initial_filters['selected_devices'])
-            if 'selected_analytes' in self.initial_filters and self.data_type != "spectral":
+            
+            # Allow restoring sites for exposure data now
+            if self.data_type != "spectral" and 'selected_sites' in self.initial_filters:
+                self.site_group.set_checked_items(self.initial_filters['selected_sites'])
+
+            if self.data_type != "spectral" and 'selected_analytes' in self.initial_filters:
                 self.analyte_group.set_checked_items(self.initial_filters['selected_analytes'])
 
     def _set_time_range(self):
@@ -476,7 +521,7 @@ class FilterDialog(QDialog):
                     thresholds_list = data.get("thresholds", [])
                     for t in thresholds_list:
                         clean = {k.strip(): v for k, v in t.items()}
-                        analyte_name = str(clean.get("analyte")).strip()
+                        analyte_name = str(clean.get("analyte", "")).strip()
                         if analyte_name:
                             entry = {}
                             for key in ["hotzone_value", "warmzone_value", "fireground_value", "community_value"]:
@@ -491,39 +536,51 @@ class FilterDialog(QDialog):
     def _apply_filters(self):
         start_dt = self.start_time_edit.dateTime().toPython().replace(second=0, microsecond=0)
         stop_dt = self.stop_time_edit.dateTime().toPython().replace(second=0, microsecond=0)
+
         if start_dt >= stop_dt:
             QMessageBox.warning(self, "Invalid Time Range", "The start time must be strictly before the stop time.")
             return
 
         level_map = {"No Threshold": None, "Hotzone": "hotzone_value", "Warmzone": "warmzone_value", "Fireground": "fireground_value", "Community": "community_value"}
         self._selected_threshold_level = level_map.get(self.threshold_combo.currentText())
+
         self.accept()
 
     def get_filters(self):
-        # If disabled (like in Spectral mode), default to selecting ALL available items
-        if self.site_group.isEnabled():
+        # If disabled (like in Spectral/Exposure mode when grouped by the other), default to selecting ALL available items
+        if self.site_group.isEnabled() and self.site_group.isVisible():
             selected_sites = self.site_group.get_checked_items()
         else:
-            selected_sites = ["Unassigned"] + list(self.available_locations)
+            if self.data_type == "exposure":
+                selected_sites = list(self.available_locations)
+            else:
+                selected_sites = ["Unassigned"] + list(self.available_locations)
 
         if self.device_group.isEnabled():
             selected_devices = self.device_group.get_checked_items()
         else:
             selected_devices = list(self.available_devices)
 
+        # CHANGED: Only spectral returns an empty list. Exposures now return their selected analytes.
         if self.data_type == "spectral":
             selected_analytes = []
         else:
             selected_analytes = self.analyte_group.get_checked_items()
 
+        # Map "Identifier" back to "Device" so filtering.py doesn't break
+        group_by_text = self.group_by_combo.currentText()
+        if group_by_text == "Identifier":
+            group_by_text = "Device"
+
         return {
             "start_time": self.start_time_edit.dateTime().toPython(),
             "stop_time": self.stop_time_edit.dateTime().toPython(),
             "interval": self.interval_combo.currentText(),
-            "group_by": self.group_by_combo.currentText(),
+            "group_by": group_by_text,
             "only_valid": self.only_valid_cb.isChecked(),
             "selected_sites": selected_sites,
             "selected_devices": selected_devices,
             "selected_analytes": selected_analytes,
-            "threshold_level": self._selected_threshold_level
+            "threshold_level": self._selected_threshold_level,
+            "data_type": self.data_type
         }
