@@ -102,7 +102,6 @@ class OverviewView(QWidget):
         self.box_spectral_device.content_layout.addWidget(self.tree_spectral_device)
         self.container_layout.addWidget(self.box_spectral_device)
 
-        # ── NEW: Exposure Accordions ──
         self.box_exposure_site = CollapsibleBox("Exposures By Area")
         self.tree_exposure_site = self._create_tree()
         self.box_exposure_site.content_layout.addWidget(self.tree_exposure_site)
@@ -133,14 +132,8 @@ class OverviewView(QWidget):
         self.box_spot_device.setVisible(True)
         self.box_spectral_site.setVisible(True)
         self.box_spectral_device.setVisible(True)
-        
-        # Handle Exposure Visibility
-        if exposure_data is not None and not exposure_data.empty:
-            self.box_exposure_site.setVisible(True)
-            self.box_exposure_device.setVisible(True)
-        else:
-            self.box_exposure_site.setVisible(False)
-            self.box_exposure_device.setVisible(False)
+        self.box_exposure_site.setVisible(True)
+        self.box_exposure_device.setVisible(True)
 
         # Populate Area trees
         self._populate_tree(self.tree_area_site, area_data, 'SITE', "Site")
@@ -155,9 +148,8 @@ class OverviewView(QWidget):
         self._populate_spectral_tree(self.tree_spectral_device, spectral_data, 'DEVICE', "Device")
 
         # Populate Exposure trees
-        if exposure_data is not None and not exposure_data.empty:
-            self._populate_exposure_tree(self.tree_exposure_site, exposure_data, 'SITE', "Area")
-            self._populate_exposure_tree(self.tree_exposure_device, exposure_data, 'DEVICE', "Identifier")
+        self._populate_exposure_tree(self.tree_exposure_site, exposure_data, 'SITE', "Area")
+        self._populate_exposure_tree(self.tree_exposure_device, exposure_data, 'DEVICE', "Identifier")
 
     def _populate_tree(self, tree, df, group_col, label_prefix):
         """Helper to populate a QTreeWidget with grouped Area/Spot data."""

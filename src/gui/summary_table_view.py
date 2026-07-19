@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton, QMessageBox, QFileDialog, QHeaderView
 )
 from PySide6.QtGui import QColor
+from base_view import DataView
 
 THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
 
@@ -17,17 +18,17 @@ class NumericTableWidgetItem(QTableWidgetItem):
         except ValueError:
             return super().__lt__(other)
 
-class SummaryTableView(QWidget):
+class SummaryTableView(DataView):
     def __init__(self, analyte_dec_pls, parent=None):
         super().__init__(parent)
         self.analyte_dec_pls = analyte_dec_pls
         self.summary_data = []
+        self.filter_summary = {}
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        
         self.summary_table = QTableWidget()
         self.summary_table.setColumnCount(6)
         self.summary_table.setHorizontalHeaderLabels(["Group", "Analyte", "Minimum", "Maximum", "Mean", "Count"])
@@ -37,24 +38,46 @@ class SummaryTableView(QWidget):
         self.summary_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.summary_table.setSortingEnabled(True)
         layout.addWidget(self.summary_table)
-        
-        bottom_layout = QHBoxLayout()
-        self.btn_export_summary = QPushButton("Export Summary CSV")
-        self.btn_export_summary.setMinimumHeight(32)
-        bottom_layout.addWidget(self.btn_export_summary)
-        bottom_layout.addStretch()
-        layout.addLayout(bottom_layout)
+        # Removed bottom layout and export button completely
 
-    def connect_signals(self, export_callback):
-        self.btn_export_summary.clicked.connect(export_callback)
+    def export(self):
+        """Satisfies the DataView interface. Exports the summary data to CSV."""
+        if not self.summary_data:
+            QMessageBox.warning(self, "No Data", "There is no summary data to export.")
+            return
+            
+        group_by_name = self.filter_summary.get("group_by", "Device")
+        if self.filter_summary.get("data_type") == "exposure":
+            group_by_name = "Identifier"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Summary to CSV", "summary_data.csv", "CSV Files (*.csv);;All Files (*)"
+        )
+        if file_path:
+            try:
+                df = pd.DataFrame(self.summary_data, columns=['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count', 'DecPls'])
+                for col in ['Min', 'Max', 'Mean']:
+                    df[col] = df.apply(lambda row: f"{row[col]:.{row['DecPls']}f}" if pd.notna(row[col]) else "", axis=1)
+                df.drop(columns=['DecPls'], inplace=True)
+                df.rename(columns={'Group': group_by_name}, inplace=True)
+                df.to_csv(file_path, index=False)
+                QMessageBox.information(self, "Success", f"Summary exported successfully to:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to export summary:\n{e}")
+
+    def get_summary_data(self):
+        """Returns the calculated data so the Chart View can use it."""
+        return self.summary_data
 
     def update_data(self, filtered_data, filter_summary, available_analytes, get_active_thresholds_func):
         """Calculates statistics and populates the table."""
+        self.filter_summary = filter_summary # Store for export
+        
         if filtered_data is None or filtered_data.empty:
             self.summary_table.setRowCount(0)
             self.summary_data = []
             return
-
+            
         df = filtered_data.copy()
         is_exposure = filter_summary.get("data_type") == "exposure"
         
@@ -66,10 +89,9 @@ class SummaryTableView(QWidget):
             group_by = filter_summary.get("group_by", "Device")
             group_col = 'DEVICE' if group_by == "Device" else 'SITE'
             group_by_label = group_by
-
+            
         # Determine valid analytes
         if is_exposure:
-            # For exposures, an analyte is valid if it has pre-calculated min/max/mean columns
             valid_analytes = []
             for g in available_analytes:
                 if f"{g}_min" in df.columns or f"{g}_max" in df.columns or f"{g}_mean" in df.columns:
@@ -77,36 +99,32 @@ class SummaryTableView(QWidget):
         else:
             selected_analytes = filter_summary.get("selected_analytes", available_analytes)
             valid_analytes = [g for g in selected_analytes if g in df.columns]
-
+            
         self.summary_table.setHorizontalHeaderLabels([group_by_label, "Analyte", "Minimum", "Maximum", "Mean", "Count"])
-
+        
         if group_col in df.columns:
             groups = df[group_col].dropna().unique()
             groups = sorted(groups, key=lambda x: str(x))
         else:
             groups = ["All"]
-
+            
         rows_data = []
         for group_val in groups:
             if group_col in df.columns:
                 group_df = df[df[group_col] == group_val]
             else:
                 group_df = df
-
+                
             for analyte in valid_analytes:
                 if is_exposure:
-                    # Extract pre-calculated values directly from the exposure record
                     min_col = f"{analyte}_min"
                     max_col = f"{analyte}_max"
                     mean_col = f"{analyte}_mean"
-                    
                     min_v = group_df[min_col].iloc[0] if min_col in group_df.columns and not group_df[min_col].empty else np.nan
                     max_v = group_df[max_col].iloc[0] if max_col in group_df.columns and not group_df[max_col].empty else np.nan
                     mean_v = group_df[mean_col].iloc[0] if mean_col in group_df.columns and not group_df[mean_col].empty else np.nan
-                    
                     count_val = len(group_df)
                     
-                    # Only add row if there's actual data for this analyte
                     if pd.notna(min_v) or pd.notna(max_v) or pd.notna(mean_v):
                         dec_pls = self.analyte_dec_pls.get(analyte, 2)
                         rows_data.append((
@@ -117,7 +135,6 @@ class SummaryTableView(QWidget):
                             int(count_val), dec_pls
                         ))
                 else:
-                    # Standard calculation for raw Area/Spot data
                     if analyte in group_df.columns:
                         analyte_data = group_df[analyte].dropna()
                         count_val = len(analyte_data)
@@ -131,7 +148,7 @@ class SummaryTableView(QWidget):
                                 float(min_val), float(max_val), float(mean_val),
                                 int(count_val), dec_pls
                             ))
-
+                            
         self.summary_table.setSortingEnabled(False)
         self.summary_table.setRowCount(len(rows_data))
         active_thresholds = get_active_thresholds_func()
@@ -156,7 +173,7 @@ class SummaryTableView(QWidget):
             self.summary_table.setItem(row, 4, mean_item)
             
             self.summary_table.setItem(row, 5, NumericTableWidgetItem(str(count_v)))
-
+            
         self.summary_table.setSortingEnabled(True)
         self.summary_data = rows_data
 
@@ -176,23 +193,3 @@ class SummaryTableView(QWidget):
     def get_summary_data(self):
         """Returns the calculated data so the Chart View can use it."""
         return self.summary_data
-
-    def export_csv(self, group_by_name="Device"):
-        if not self.summary_data:
-            QMessageBox.warning(self, "No Data", "There is no summary data to export.")
-            return
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export Summary to CSV", "summary_data.csv", "CSV Files (*.csv);;All Files (*)"
-        )
-        if file_path:
-            try:
-                df = pd.DataFrame(self.summary_data, columns=['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count', 'DecPls'])
-                for col in ['Min', 'Max', 'Mean']:
-                    # Handle NaN values gracefully during string formatting
-                    df[col] = df.apply(lambda row: f"{row[col]:.{row['DecPls']}f}" if pd.notna(row[col]) else "", axis=1)
-                df.drop(columns=['DecPls'], inplace=True)
-                df.rename(columns={'Group': group_by_name}, inplace=True)
-                df.to_csv(file_path, index=False)
-                QMessageBox.information(self, "Success", f"Summary exported successfully to:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to export summary:\n{e}")

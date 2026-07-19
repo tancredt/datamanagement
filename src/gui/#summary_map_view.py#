@@ -1,32 +1,3 @@
-import os
-import sys
-import datetime
-import pandas as pd
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton,
-    QMessageBox, QFileDialog, QScrollArea, QRadioButton, QButtonGroup, QStackedWidget, QSizePolicy
-)
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPixmap, QPainter, QPen
-
-# Import the new base class
-from base_view import DataView
-
-class SummaryMapCanvas(QWidget):
-    """Custom widget to display a map image and overlay summary data at marker locations."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.pixmap = None
-        self.markers_data = []
-
-    def set_image(self, pixmap):
-        self.pixmap = pixmap
-        if self.pixmap and not self.pixmap.isNull():
-            self.setFixedSize(self.pixmap.size())
-        else:
-            self.setFixedSize(800, 600)
-        self.update()
-
     def set_markers(self, markers_data):
         self.markers_data = markers_data
         self.update()
@@ -96,6 +67,8 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         self.summary_map_analyte_combo.setMinimumWidth(120)
         self.summary_map_analyte_combo.currentTextChanged.connect(self._redraw)
         map_top_layout.addWidget(self.summary_map_analyte_combo)
+        
+        # (Removed old btn_export_summary_map from here)
         
         map_top_layout.addStretch()
         

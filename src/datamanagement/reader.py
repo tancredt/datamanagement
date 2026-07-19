@@ -148,3 +148,90 @@ def read_spectral_data(incident_path):
     df.to_csv(processed_file, index=False)
     
     return df
+
+# Add this to the bottom of reader.py
+
+#==========================================
+#4. EXPOSURE DATA (Reads raw JSON -> Returns Summary DF)
+#==========================================
+def read_exposure_data(incident_path):
+    """
+    Reads exposures.json, converts it to a standardized summary DataFrame,
+    and returns it. Formats analytes into {analyte}_min, {analyte}_max, 
+    and {analyte}_mean columns for direct use in summary views.
+    """
+    json_path = os.path.join(incident_path, "data", "exposures", "exposures.json")
+    if not os.path.exists(json_path):
+        return pd.DataFrame()
+
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load exposures JSON: {e}")
+        return pd.DataFrame()
+
+    # Helper to recursively strip whitespace from keys and string values
+    def clean(obj):
+        if isinstance(obj, dict):
+            return {k.strip(): clean(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [clean(elem) for elem in obj]
+        elif isinstance(obj, str):
+            return obj.strip()
+        return obj
+
+    data = clean(data)
+
+    # Load analytes.json to map raw responder names (e.g., "CO(ppm)") to standard names ("CO")
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    analyte_config_path = os.path.normpath(os.path.join(current_dir, '..', 'static', 'lists', 'analytes.json'))
+    responder_to_name = {}
+    if os.path.exists(analyte_config_path):
+        try:
+            with open(analyte_config_path, 'r', encoding='utf-8') as f:
+                analyte_config = json.load(f)
+                for analyte in analyte_config.get("analytes", []):
+                    resp_name = analyte.get("responder_name")
+                    std_name = analyte.get("name")
+                    if resp_name and std_name:
+                        responder_to_name[resp_name.lower()] = std_name
+        except Exception as e:
+            logger.error(f"Failed to load analytes config for exposures: {e}")
+
+    rows = []
+    for exp in data.get("exposures", []):
+        row = {
+            "LOG TIME": exp.get("start"),
+            "DEVICE": exp.get("id", ""),  # Map 'id' to 'DEVICE' (Identifier)
+            "SITE": exp.get("area", ""),  # Map 'area' to 'SITE'
+        }
+        
+        values = exp.get("values", {})
+        for k, v in values.items():
+            # Map raw key to standard analyte name, fallback to stripped raw key
+            base_name = responder_to_name.get(k.lower(), k)
+            
+            if isinstance(v, dict):
+                if "min" in v and v["min"] is not None:
+                    row[f"{base_name}_min"] = float(v["min"])
+                if "max" in v and v["max"] is not None:
+                    row[f"{base_name}_max"] = float(v["max"])
+                if "mean" in v and v["mean"] is not None:
+                    row[f"{base_name}_mean"] = float(v["mean"])
+            else:
+                # Fallback if it's just a single value instead of a dict
+                try:
+                    row[base_name] = float(v)
+                except (ValueError, TypeError):
+                    pass
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    if 'LOG TIME' in df.columns:
+        df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
+        
+    return df

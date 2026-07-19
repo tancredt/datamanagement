@@ -1,18 +1,22 @@
 import os
 import sys
 import pandas as pd
+import os
+import sys
+import pandas as pd
 import matplotlib
 matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
-from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFileDialog, QMessageBox
 from PySide6.QtGui import QColor
+from base_view import DataView
 
 THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
 
-class ChartView(QWidget):
+class ChartView(DataView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
@@ -20,13 +24,28 @@ class ChartView(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-
         self.figure, self.ax = plt.subplots(figsize=(8, 4))
         self.canvas = FigureCanvas(self.figure)
         self.toolbar = NavigationToolbar(self.canvas, self)
-
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas, stretch=1)
+        # Removed self.btn_export_chart completely
+
+    def export(self):
+        """Exports the current Matplotlib figure to a PNG file."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Chart", "chart.png", "PNG Files (*.png);;All Files (*)"
+        )
+        if file_path:
+            try:
+                self.figure.savefig(file_path, bbox_inches='tight')
+                QMessageBox.information(self, "Success", f"Chart exported successfully to:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to export chart:\n{e}")
+
+    def update_data(self, filtered_data, filter_summary, available_analytes, get_active_thresholds_func):
+        """Satisfies the DataView interface by calling the plotting logic."""
+        self.plot_data(filtered_data, filter_summary, available_analytes, get_active_thresholds_func)
 
     def plot_data(self, filtered_data, filter_summary, available_analytes, get_active_thresholds_func):
         self.ax.clear()

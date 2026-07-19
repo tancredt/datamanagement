@@ -36,24 +36,22 @@ def filter_data(df, start_dt, stop_dt, selected_sites, selected_devices,
 
     if 'SITE' in res.columns:
         res['SITE'] = res['SITE'].fillna('')
-    if 'DEVICE' in res.columns:
-        res['DEVICE'] = res['DEVICE'].fillna('')
+        # Map empty or whitespace-only sites to 'Unassigned' to match the UI checkbox
+        res.loc[res['SITE'].astype(str).str.strip() == '', 'SITE'] = 'Unassigned'
+        
+    if group_by == 'Site' and selected_sites:
+        res = res[res['SITE'].isin(selected_sites)]
+    elif group_by == 'Device' and selected_devices:
+        # Include selected devices AND any readings with an empty/unassigned device
+        device_mask = res['DEVICE'].isin(selected_devices)
+        empty_device_mask = res['DEVICE'].astype(str).str.strip() == ''
+        res = res[device_mask | empty_device_mask]
 
-    # ──────────────────────────────────────────────
-    # 2. SITE & DEVICE FILTERING LOGIC (ALL DATA TYPES)
-    # ──────────────────────────────────────────────
-    if data_type in ["spot", "spectral"]:
-        if 'SITE' in res.columns and selected_sites:
-            res = res[res['SITE'].isin(selected_sites)]
-        if 'DEVICE' in res.columns and selected_devices:
-            res = res[res['DEVICE'].isin(selected_devices)]
-    else:
-        if group_by == 'Site':
-            if 'SITE' in res.columns and selected_sites:
-                res = res[res['SITE'].isin(selected_sites)]
-        elif group_by == 'Device':
-            if 'DEVICE' in res.columns and selected_devices:
-                res = res[res['DEVICE'].isin(selected_devices)]
+    if group_by == 'Site' and selected_sites:
+        res = res[res['SITE'].isin(selected_sites)]
+    elif group_by == 'Device' and selected_devices:
+        res = res[res['DEVICE'].isin(selected_devices)]
+    
 
     if res.empty:
         return res
@@ -62,19 +60,22 @@ def filter_data(df, start_dt, stop_dt, selected_sites, selected_devices,
     # 3. COLUMN SELECTION (ALL DATA TYPES)
     # ──────────────────────────────────────────────
     keep_cols = [c for c in ['LOG TIME', 'SITE', 'DEVICE', 'Latitude', 'Longitude'] if c in res.columns]
-    
     if data_type in ["spot", "spectral"]:
         keep_cols += [c for c in ['observations', 'chemicals_identified', 'comments', 'file_ref'] if c in res.columns]
-
+        
     analyte_cols_to_keep = []
     invalid_cols_to_keep = []
     for analyte in selected_analytes:
-        if analyte in res.columns:
-            analyte_cols_to_keep.append(analyte)
+        # Support both raw columns and exposure summary columns (_min, _max, _mean)
+        for suffix in ['', '_min', '_max', '_mean']:
+            col_name = f"{analyte}{suffix}"
+            if col_name in res.columns and col_name not in analyte_cols_to_keep:
+                analyte_cols_to_keep.append(col_name)
+                
         inv_col = f"INVALID_{analyte}"
         if inv_col in res.columns:
             invalid_cols_to_keep.append(inv_col)
-            
+
     final_cols = list(dict.fromkeys(keep_cols + analyte_cols_to_keep + invalid_cols_to_keep))
     res = res[[c for c in final_cols if c in res.columns]]
 

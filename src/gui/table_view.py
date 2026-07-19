@@ -4,10 +4,13 @@ import pandas as pd
 import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView,
-    QPushButton, QLabel, QHeaderView
+    QPushButton, QLabel, QHeaderView, QFileDialog, QMessageBox
 )
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PySide6.QtGui import QColor
+
+# Import the new base class
+from base_view import DataView
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -86,7 +89,6 @@ class PaginatedTableModel(QAbstractTableModel):
         self._invalid_cells = set()
         if self._full_df.empty:
             return
-
         analyte_cols = [c for c in self._full_df.columns if c in self.dec_pls_dict]
         for analyte in analyte_cols:
             inv_col = next((c for c in self._full_df.columns if c.upper() == f"INVALID_{analyte}".upper()), None)
@@ -108,7 +110,6 @@ class PaginatedTableModel(QAbstractTableModel):
             return False
         if pd.isna(val):
             return False
-
         threshold = self._active_thresholds[col_name]
         if col_name.upper().startswith("O2"):
             return val < threshold
@@ -118,11 +119,9 @@ class PaginatedTableModel(QAbstractTableModel):
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
-
         row = index.row()
         col = index.column()
         col_name = self._current_df.columns[col]
-
         cell_invalid = self._is_cell_invalid(row, col_name)
         val = self._current_df.iloc[row, col]
 
@@ -141,10 +140,8 @@ class PaginatedTableModel(QAbstractTableModel):
 
         if col_name.upper().startswith("INVALID_"):
             return ""
-
         if pd.isna(val):
             return ""
-
         if col_name in self.dec_pls_dict and isinstance(val, (int, float, np.floating, np.integer)):
             return f"{val:.{self.dec_pls_dict[col_name]}f}"
         elif isinstance(val, pd.Timestamp):
@@ -159,11 +156,10 @@ class PaginatedTableModel(QAbstractTableModel):
                 return str(section + 1 + self.current_page * self.page_size)
         return None
 
-
 # ─────────────────────────────────────────────────────────
 # Table View Widget
 # ─────────────────────────────────────────────────────────
-class TableView(QWidget):
+class TableView(DataView):
     def __init__(self, analyte_dec_pls, parent=None):
         super().__init__(parent)
         self.analyte_dec_pls = analyte_dec_pls
@@ -173,43 +169,63 @@ class TableView(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-
         self.table_view = QTableView()
         self.table_view.setAlternatingRowColors(True)
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table_view.verticalHeader().setVisible(False)
         layout.addWidget(self.table_view, stretch=1)
 
-        # Bottom Controls
+        # Bottom Controls (Export button completely removed)
         bottom_layout = QHBoxLayout()
-        self.btn_export_table = QPushButton("Export CSV")
         self.btn_prev_page = QPushButton("Previous")
         self.lbl_page_info = QLabel("Page 0 of 0")
         self.btn_next_page = QPushButton("Next")
-
-        bottom_layout.addWidget(self.btn_export_table)
+        
         bottom_layout.addStretch()
         bottom_layout.addWidget(self.btn_prev_page)
         bottom_layout.addWidget(self.lbl_page_info)
         bottom_layout.addWidget(self.btn_next_page)
         bottom_layout.addStretch()
-
         layout.addLayout(bottom_layout)
+
+    def export(self):
+        """Satisfies the DataView interface. Exports the full underlying dataframe to a CSV file."""
+        if self.model is None or self.model._full_df.empty:
+            QMessageBox.warning(self, "No Data", "There is no data to export.")
+            return
+            
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Table to CSV", "filtered_data.csv",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        if file_path:
+            try:
+                export_df = self.model._full_df.copy()
+                # Drop INVALID_ columns before exporting
+                inv_cols = [c for c in export_df.columns if c.upper().startswith('INVALID_')]
+                export_df.drop(columns=inv_cols, inplace=True, errors='ignore')
+                export_df.to_csv(file_path, index=False)
+                QMessageBox.information(self, "Success", f"Table exported successfully to:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to export table:\n{e}")
 
     def set_data(self, df, show_invalid_bg=True, active_thresholds=None):
         if self.model is None:
             self.model = PaginatedTableModel(dec_pls_dict=self.analyte_dec_pls, page_size=100)
             self.table_view.setModel(self.model)
-
         self.model.set_show_invalid_bg(show_invalid_bg)
         self.model.set_active_thresholds(active_thresholds or {})
         self.model.set_data(df)
         self._update_table()
 
-    def connect_signals(self, export_callback, prev_callback, next_callback):
-        self.btn_export_table.clicked.connect(export_callback)
+    def connect_signals(self, prev_callback, next_callback):
+        # Export callback removed since it's handled globally via the DataView interface now
         self.btn_prev_page.clicked.connect(prev_callback)
         self.btn_next_page.clicked.connect(next_callback)
+
+    def update_data(self, *args, **kwargs):
+        """Satisfies the DataView interface."""
+        self.set_data(*args, **kwargs)
 
     def _update_table(self):
         if self.model.total_pages > 0:
@@ -231,7 +247,6 @@ class TableView(QWidget):
             if col.upper().startswith("INVALID_"):
                 self.table_view.setColumnHidden(i, True)
                 continue
-            
             self.table_view.setColumnHidden(i, False)
             if col == 'LOG TIME':
                 self.table_view.setColumnWidth(i, 160)
@@ -245,5 +260,4 @@ class TableView(QWidget):
                 self.table_view.setColumnWidth(i, 80)
             else:
                 self.table_view.setColumnWidth(i, 100)
-
-        header.setStretchLastSection(True)    
+        header.setStretchLastSection(True)

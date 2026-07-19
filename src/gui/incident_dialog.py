@@ -177,7 +177,9 @@ class IncidentDialog(QDialog):
                 # Added "logs" to the directory creation list
                 dirs = [os.path.join(incident_dir, d) for d in ["meta", "mapping", 
                                                                   "validations",
-                                                                  "data/export_csv", "data/realtime", "data/processed", "data/exposures", "reports", "logs"]]
+                                                                  "data/export_csv",
+                                                                  "data/realtime", "data/processed",
+                                                                  "data/exposures", "reports", "logs", "plumes"]]
                 os.makedirs(incident_dir, exist_ok=True)
                 for d in dirs: 
                     os.makedirs(d, exist_ok=False)

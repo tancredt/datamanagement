@@ -8,7 +8,7 @@
 	    "community_value": "10.0"
 	},
 	{
-	    "analtye": "VOC(PPM)",
+	    "analyte": "VOC(PPM)",
 	    "hotzone_value": "110.0",
 	    "warmzone_value": "50.0",
 	    "fireground_value": "20.0",

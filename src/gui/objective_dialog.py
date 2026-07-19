@@ -27,11 +27,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-
 # ─────────────────────────────────────────────────────────
 # Editable Tab Bar (double-click to rename)
 # ─────────────────────────────────────────────────────────
-
 class EditableTabBar(QTabBar):
     """A QTabBar that emits a signal when a tab is double-clicked."""
     tabRenameRequested = Signal(int)
@@ -43,11 +41,9 @@ class EditableTabBar(QTabBar):
         else:
             super().mouseDoubleClickEvent(event)
 
-
 # ─────────────────────────────────────────────────────────
 # Observation Widget
 # ─────────────────────────────────────────────────────────
-
 class ObservationWidget(QWidget):
     """Widget for a single observation entry."""
     filter_requested = Signal(object)
@@ -63,16 +59,18 @@ class ObservationWidget(QWidget):
         # ── Data Type Combo ──
         layout.addWidget(QLabel("Data Type: "))
         self.data_type_combo = QComboBox()
-        self.data_type_combo.addItems(["Spot Readings", "Area Readings", "Spectral Results"])
+        self.data_type_combo.addItems(["Spot Readings", "Area Readings", "Spectral Results", "Exposures"])
         self.data_type_combo.setMinimumWidth(130)
-
+        
         if data_type == "area":
             self.data_type_combo.setCurrentText("Area Readings")
         elif data_type == "spectral":
             self.data_type_combo.setCurrentText("Spectral Results")
+        elif data_type == "exposure":
+            self.data_type_combo.setCurrentText("Exposures")
         else:
             self.data_type_combo.setCurrentText("Spot Readings")
-
+            
         self.data_type_combo.currentTextChanged.connect(self._on_data_type_changed)
         layout.addWidget(self.data_type_combo)
 
@@ -83,12 +81,11 @@ class ObservationWidget(QWidget):
         self.form_combo.setMinimumWidth(150)
         layout.addWidget(self.form_combo)
 
-        # ── Filter Button (renamed to just "Filter") ──
+        # ── Filter Button ──
         self.filter_button = QPushButton("Filter")
         self.filter_button.setMinimumWidth(120)
         self.filter_button.clicked.connect(self._on_filter_clicked)
         layout.addWidget(self.filter_button)
-
         layout.addStretch()
 
         # Apply initial form state based on data type
@@ -100,25 +97,31 @@ class ObservationWidget(QWidget):
             self.data_type = "spot"
         elif "Area" in text:
             self.data_type = "area"
+        elif "Exposures" in text:
+            self.data_type = "exposure"
         else:
             self.data_type = "spectral"
         self._update_form_for_data_type(self.data_type)
 
     def _update_form_for_data_type(self, data_type):
-        """Forces Form combo to 'Table' and disables it when Spectral is selected."""
+        """Forces Form combo to valid options based on data type."""
         self.form_combo.blockSignals(True)
         if data_type == "spectral":
-            # Spectral only supports Table
             self.form_combo.clear()
             self.form_combo.addItem("Table")
             self.form_combo.setCurrentText("Table")
             self.form_combo.setEnabled(False)
+        elif data_type == "exposure":
+            # Exposures only support Summary Table and Summary Chart
+            self.form_combo.clear()
+            self.form_combo.addItems(["Summary Table", "Summary Chart"])
+            self.form_combo.setCurrentText("Summary Table")
+            self.form_combo.setEnabled(True)
         else:
             # Restore full options for Spot/Area
             current_text = self.form_combo.currentText()
             self.form_combo.clear()
             self.form_combo.addItems(["Table", "Chart", "Summary Table", "Summary Chart", "Summary Map"])
-            # Restore previous selection if still valid
             if current_text in [self.form_combo.itemText(i) for i in range(self.form_combo.count())]:
                 self.form_combo.setCurrentText(current_text)
             else:
@@ -163,15 +166,14 @@ class ObservationWidget(QWidget):
             self.filter_button.setText("Filter")
             self.filter_button.setStyleSheet("")
 
-
 # ─────────────────────────────────────────────────────────
 # Objective Widget
 # ─────────────────────────────────────────────────────────
-
 class ObjectiveWidget(QWidget):
     """Widget representing a single objective with all its fields."""
     filter_requested = Signal(object)
-
+    delete_requested = Signal(object)
+    
     def __init__(self, objective_number=1, data_type="spot", parent=None):
         super().__init__(parent)
         self.objective_number = objective_number
@@ -203,7 +205,15 @@ class ObjectiveWidget(QWidget):
         self.lbl_updated = QLabel("Updated: --")
         self.lbl_updated.setStyleSheet("color: gray; font-size: 11px;")
         status_layout.addWidget(self.lbl_updated)
+        
+        # ── Delete Objective Button ──
         status_layout.addStretch()
+        self.btn_delete = QPushButton("Delete Objective")
+        self.btn_delete.setStyleSheet("color: #dc3545; font-weight: bold;")
+        self.btn_delete.setCursor(Qt.PointingHandCursor)
+        self.btn_delete.clicked.connect(lambda: self.delete_requested.emit(self))
+        status_layout.addWidget(self.btn_delete)
+        
         main_layout.addLayout(status_layout)
 
         # Objective
@@ -255,6 +265,14 @@ class ObjectiveWidget(QWidget):
     def _forward_filter_request(self, observation_widget):
         self.filter_requested.emit(observation_widget)
 
+    def _handle_delete_request(self, objective_widget):
+        """Find the tab containing this widget and trigger the close/delete logic."""
+        for i in range(self.tab_widget.count()):
+            scroll_area = self.tab_widget.widget(i)
+            if scroll_area.widget() == objective_widget:
+                self._on_tab_close_requested(i)
+                return
+        
     def get_data(self):
         # Generate timestamps on save
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -276,11 +294,9 @@ class ObjectiveWidget(QWidget):
             'updated': self.updated
         }
 
-
 # ─────────────────────────────────────────────────────────
 # Objective Dialog (using QTabWidget)
 # ─────────────────────────────────────────────────────────
-
 class ObjectiveDialog(QDialog):
     """Main dialog for creating and managing air monitoring objectives."""
 
@@ -315,12 +331,10 @@ class ObjectiveDialog(QDialog):
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.setMovable(True)
-
         editable_bar = EditableTabBar()
         self.tab_widget.setTabBar(editable_bar)
         self.tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
         editable_bar.tabRenameRequested.connect(self._on_tab_rename_requested)
-
         main_layout.addWidget(self.tab_widget)
 
         btn_layout = QHBoxLayout()
@@ -355,6 +369,7 @@ class ObjectiveDialog(QDialog):
 
         obj_widget = ObjectiveWidget(self.objective_count, data_type=self.default_data_type, parent=self)
         obj_widget.filter_requested.connect(self._handle_filter_request)
+        obj_widget.delete_requested.connect(self._handle_delete_request)
 
         if obj_data:
             obj_widget.status_combo.setCurrentText(obj_data.get('status', 'Ongoing'))
@@ -385,7 +400,6 @@ class ObjectiveDialog(QDialog):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         scroll.setWidget(obj_widget)
-
         index = self.tab_widget.addTab(scroll, tab_title)
         self.tab_widget.setCurrentIndex(index)
 
@@ -465,12 +479,10 @@ class ObjectiveDialog(QDialog):
                 f"Successfully saved {len(all_data)} objective(s) to:\n{self.objectives_file}"
             )
             self.accept()
-
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save objectives:\n{e}")
 
     # ── Filter Handling ──────────────────────────────────
-
     def _load_filter_data(self, data_type="spot"):
         if not self.incident_path:
             return {}
@@ -483,7 +495,6 @@ class ObjectiveDialog(QDialog):
         )
         available_analytes = []
         analyte_dec_pls = {}
-
         if os.path.exists(analyte_config_path):
             try:
                 with open(analyte_config_path, 'r', encoding='utf-8') as f:
@@ -528,6 +539,7 @@ class ObjectiveDialog(QDialog):
         area_file = os.path.join(incident_path, "data", "processed", "area_data.csv")
         spot_file = os.path.join(incident_path, "mapping", "spot_locations.json")
         spectral_file = os.path.join(incident_path, "mapping", "spectral_locations.json")
+        exposures_file = os.path.join(incident_path, "data", "exposures", "exposures.json")
 
         if data_type == "area" and os.path.exists(area_file):
             try:
@@ -535,7 +547,6 @@ class ObjectiveDialog(QDialog):
                 raw_data['LOG TIME'] = pd.to_datetime(raw_data['LOG TIME'], errors='coerce')
             except Exception as e:
                 print(f"Failed to load area data: {e}")
-
         elif data_type == "spot" and os.path.exists(spot_file):
             try:
                 with open(spot_file, 'r', encoding='utf-8') as f:
@@ -568,7 +579,6 @@ class ObjectiveDialog(QDialog):
                     raw_data['LOG TIME'] = pd.to_datetime(raw_data['LOG TIME'], errors='coerce')
             except Exception as e:
                 print(f"Failed to load spot data: {e}")
-
         elif data_type == "spectral" and os.path.exists(spectral_file):
             try:
                 with open(spectral_file, 'r', encoding='utf-8') as f:
@@ -598,6 +608,12 @@ class ObjectiveDialog(QDialog):
                     raw_data['LOG TIME'] = pd.to_datetime(raw_data['LOG TIME'], errors='coerce')
             except Exception as e:
                 print(f"Failed to load spectral data: {e}")
+        elif data_type == "exposure" and os.path.exists(exposures_file):
+            try:
+                from datamanagement.reader import read_exposure_data
+                raw_data = read_exposure_data(incident_path)
+            except Exception as e:
+                print(f"Failed to load exposure data: {e}")
 
         return {
             'raw_data': raw_data,
@@ -616,7 +632,6 @@ class ObjectiveDialog(QDialog):
             return
 
         current_filters = observation_widget.filter_data or {}
-
         filter_dlg = FilterDialog(
             parent=self,
             incident_path=self.incident_path,

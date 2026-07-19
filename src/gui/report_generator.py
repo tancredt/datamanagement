@@ -19,10 +19,10 @@ parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from datamanagement.filtering import filter_data
+from datamanagement.filtering import filter_data, aggregate_data
+from datamanagement.reader import read_area_data, read_spot_data, read_spectral_data, read_exposure_data
 
 logger = logging.getLogger(__name__)
-
 
 def load_json(filepath):
     """Helper to safely load JSON files."""
@@ -30,44 +30,6 @@ def load_json(filepath):
         with open(filepath, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
-
-
-def _load_spectral_df(incident_path):
-    """Loads spectral data from spectral_locations.json into a DataFrame."""
-    spectral_file = os.path.join(incident_path, "mapping", "spectral_locations.json")
-    if not os.path.exists(spectral_file):
-        return pd.DataFrame()
-
-    try:
-        with open(spectral_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load spectral data: {e}")
-        return pd.DataFrame()
-
-    rows = []
-    for loc in data.get("maps", {}).get("locations", []):
-        for marker in loc.get("markers", []):
-            label = marker.get("label", "")
-            site = label if label else "Unassigned"
-            for r in marker.get("readings", []):
-                clean_r = {k.strip(): v for k, v in r.items()}
-                row = {
-                    "LOG TIME": clean_r.get("datetime"),
-                    "DEVICE": clean_r.get("device", ""),
-                    "SITE": site,
-                    "chemicals_identified": clean_r.get("chemicals_identified", ""),
-                    "comments": clean_r.get("comments", ""),
-                    "file_ref": clean_r.get("file_ref", "")
-                }
-                rows.append(row)
-
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-        df = df.dropna(subset=['LOG TIME'])
-    return df
-
 
 def generate_pdf_report(incident_path, parent_widget=None):
     """Generates a comprehensive PDF report for the incident."""
@@ -115,43 +77,15 @@ def generate_pdf_report(incident_path, parent_widget=None):
             if fname:
                 area_maps_data[fname] = loc.get("markers", [])
 
-        # 2. Load Raw Data (Area, Spot, AND Spectral)
-        area_df = pd.DataFrame()
-        area_file = os.path.join(incident_path, "data", "processed", "area_data.csv")
-        if os.path.exists(area_file):
-            area_df = pd.read_csv(area_file)
-            area_df['LOG TIME'] = pd.to_datetime(area_df['LOG TIME'], errors='coerce')
-
-        spot_df = pd.DataFrame()
-        if os.path.exists(os.path.join(incident_path, "mapping", "spot_locations.json")):
-            rows = []
-            for loc in spot_locations.get("maps", {}).get("locations", []):
-                for marker in loc.get("markers", []):
-                    label = marker.get("label", "")
-                    site = label if label else "Unassigned"
-                    for r in marker.get("readings", []):
-                        clean_r = {k.strip(): v for k, v in r.items()}
-                        row = {
-                            "LOG TIME": clean_r.get("datetime"),
-                            "DEVICE": clean_r.get("device", ""),
-                            "SITE": site,
-                            "observations": clean_r.get("observations", "")
-                        }
-                        for analyte in available_analytes:
-                            row[analyte] = clean_r.get(analyte)
-                            row[f"INVALID_{analyte}"] = 0
-                        rows.append(row)
-            spot_df = pd.DataFrame(rows)
-            if not spot_df.empty:
-                spot_df['LOG TIME'] = pd.to_datetime(spot_df['LOG TIME'], errors='coerce')
-
-        # Load Spectral Data
-        spectral_df = _load_spectral_df(incident_path)
+        # 2. Load Raw Data using reader.py (Single Source of Truth)
+        area_df = read_area_data(incident_path)
+        spot_df = read_spot_data(incident_path)
+        spectral_df = read_spectral_data(incident_path)
+        exposure_df = read_exposure_data(incident_path)
 
         # 3. Ask user where to save the PDF
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         default_filename = f"Air_Monitoring_Report_{timestamp}.pdf"
-
         pdf_path, _ = QFileDialog.getSaveFileName(
             parent_widget,
             "Save PDF Report",
@@ -182,10 +116,12 @@ def generate_pdf_report(incident_path, parent_widget=None):
                          fontsize=9, ha='left', va='bottom', style='italic', color='gray')
                 fig.text(0.95, 0.015, f"Page {page_num}",
                          fontsize=9, ha='right', va='bottom', style='italic', color='gray')
+
                 # Summary Box (Only on observation pages)
                 if summary_text:
                     fig.text(0.5, 0.96, summary_text, fontsize=10, ha='center', va='top',
                              bbox=dict(facecolor='#f8f9fa', alpha=0.9, edgecolor='#dee2e6', boxstyle='round,pad=0.4'))
+
                 pdf.savefig(fig)
                 plt.close(fig)
                 page_num += 1
@@ -205,6 +141,7 @@ def generate_pdf_report(incident_path, parent_widget=None):
                 for filename, markers in maps_data.items():
                     fig = plt.figure(figsize=(8.5, 11))
                     fig.text(0.5, 0.92, f"{map_type} Map: {filename}", fontsize=18, fontweight='bold', ha='center')
+
                     mapping_dir = os.path.join(incident_path, "mapping")
                     img_path = os.path.join(mapping_dir, filename)
                     if os.path.exists(img_path):
@@ -212,6 +149,7 @@ def generate_pdf_report(incident_path, parent_widget=None):
                         ax_img = fig.add_axes([0.1, 0.25, 0.8, 0.60])
                         ax_img.imshow(img)
                         ax_img.axis('off')
+
                         for m in markers:
                             x, y, label = m.get('x', 0), m.get('y', 0), m.get('label', '')
                             circle = Circle((x, y), 8, color='yellow', ec='red', lw=2, zorder=5)
@@ -226,9 +164,11 @@ def generate_pdf_report(incident_path, parent_widget=None):
                             lat = coords.get('latitude', 'N/A')
                             lon = coords.get('longitude', 'N/A')
                             details_text += f"• {label}: {desc} | Coords: ({lat}, {lon})\n"
+
                         fig.text(0.1, 0.20, details_text, fontsize=10, verticalalignment='top', wrap=True, family='monospace')
                     else:
                         fig.text(0.5, 0.5, f"Map image not found: {filename}", ha='center', va='center', fontsize=14)
+
                     save_page(fig, "Site Maps")
 
             # --- SECTION 3+: Objectives ---
@@ -249,14 +189,16 @@ def generate_pdf_report(incident_path, parent_widget=None):
                     created = obj.get('created', 'N/A')
                     updated = obj.get('updated', 'N/A')
 
-                    # Objective Header Page (NO "Observations:" header here anymore)
+                    # Objective Header Page
                     fig = plt.figure(figsize=(8.5, 11))
                     fig.text(0.5, 0.92, f"Objective {obj_num}", fontsize=20, fontweight='bold', ha='center')
                     fig.text(0.05, 0.87, f"Status: {status}", fontsize=14)
                     fig.text(0.05, 0.84, f"Created: {created}  |  Updated: {updated}",
                              fontsize=11, style='italic', color='gray')
+
                     fig.text(0.05, 0.79, "Objective:", fontsize=14, fontweight='bold')
                     fig.text(0.05, 0.74, objective_text, fontsize=12, wrap=True, va='top')
+
                     fig.text(0.05, 0.60, "Conclusions:", fontsize=14, fontweight='bold')
                     fig.text(0.05, 0.55, conclusions, fontsize=12, wrap=True, va='top')
                     save_page(fig, zone_name)
@@ -273,6 +215,8 @@ def generate_pdf_report(incident_path, parent_widget=None):
                             raw_df = spectral_df
                         elif data_type == 'spot':
                             raw_df = spot_df
+                        elif data_type == 'exposure':
+                            raw_df = exposure_df
                         else:
                             raw_df = area_df
 
@@ -290,7 +234,7 @@ def generate_pdf_report(incident_path, parent_widget=None):
                         selected_analytes = filter_data_dict.get('selected_analytes', [])
                         threshold_level = filter_data_dict.get('threshold_level')
 
-                        # Apply filtering - spectral uses simple filtering, spot/area use filter_data
+                        # Apply filtering - spectral uses simple filtering, others use filter_data
                         if data_type == 'spectral':
                             mask = pd.Series([True] * len(raw_df))
                             if 'LOG TIME' in raw_df.columns:
@@ -304,13 +248,34 @@ def generate_pdf_report(incident_path, parent_widget=None):
                             if not filtered_df.empty and 'LOG TIME' in filtered_df.columns:
                                 filtered_df = filtered_df.sort_values(by='LOG TIME')
                         else:
+                            # Use keyword arguments for filter_data
                             filtered_df = filter_data(
-                                raw_df, start_time, stop_time, interval,
-                                selected_sites, selected_analytes, selected_devices,
-                                only_valid, group_by
+                                df=raw_df,
+                                start_dt=start_time,
+                                stop_dt=stop_time,
+                                selected_sites=selected_sites,
+                                selected_devices=selected_devices,
+                                selected_analytes=selected_analytes,
+                                only_valid=only_valid,
+                                group_by=group_by,
+                                data_type=data_type
                             )
+                            
+                            # Aggregate data if interval is not Raw (Exposures are already summarised)
+                            if data_type != 'exposure' and interval.strip() != 'Raw' and not filtered_df.empty:
+                                filtered_df = aggregate_data(
+                                    df=filtered_df,
+                                    interval=interval.strip(),
+                                    group_by=group_by,
+                                    start_dt=start_time,
+                                    stop_dt=stop_time
+                                )
 
                         if filtered_df.empty:
+                            continue
+
+                        # Skip unsupported forms for exposures
+                        if data_type == 'exposure' and form not in ['Summary Table', 'Summary Chart', 'Table']:
                             continue
 
                         # Format summary string for the top of the page
@@ -322,6 +287,12 @@ def generate_pdf_report(incident_path, parent_widget=None):
                                 f"Data Type: Spectral Results | "
                                 f"Time: {start_t_str} to {stop_t_str}"
                             )
+                        elif data_type == 'exposure':
+                            summary_str = (
+                                f"Data Type: Exposures | "
+                                f"Analytes: {', '.join(selected_analytes)} | "
+                                f"Time: {start_t_str} to {stop_t_str}"
+                            )
                         else:
                             summary_str = (
                                 f"Data Type: {'Spot Readings' if data_type == 'spot' else 'Area Readings'} | "
@@ -331,8 +302,6 @@ def generate_pdf_report(incident_path, parent_widget=None):
                             )
 
                         fig = plt.figure(figsize=(8.5, 11))
-
-                        # ── Add "Observations:" header at the top of this page ──
                         fig.text(0.05, 0.92, "Observations:", fontsize=14, fontweight='bold')
 
                         if form == 'Table':
@@ -346,6 +315,15 @@ def generate_pdf_report(incident_path, parent_widget=None):
                                     cols_to_show.append('file_ref')
                                 cols_to_show = [c for c in cols_to_show if c in df.columns]
                                 df = df[cols_to_show]
+                            elif data_type == 'exposure':
+                                # For exposures, show the pre-calculated summary columns
+                                cols_to_show = ['LOG TIME', 'SITE', 'DEVICE']
+                                for analyte in selected_analytes:
+                                    for suffix in ['_min', '_max', '_mean']:
+                                        col_name = f"{analyte}{suffix}"
+                                        if col_name in df.columns:
+                                            cols_to_show.append(col_name)
+                                df = df[[c for c in cols_to_show if c in df.columns]]
                             else:
                                 cols_to_show = ['LOG TIME']
                                 if group_by == 'Site' and 'SITE' in df.columns:
@@ -353,14 +331,14 @@ def generate_pdf_report(incident_path, parent_widget=None):
                                 elif group_by == 'Device' and 'DEVICE' in df.columns:
                                     cols_to_show.append('DEVICE')
                                 cols_to_show.extend([g for g in selected_analytes if g in df.columns])
-                                if interval == 'Raw' and data_type == 'spot' and 'observations' in df.columns:
+                                if interval.strip() == 'Raw' and data_type == 'spot' and 'observations' in df.columns:
                                     cols_to_show.append('observations')
                                 df = df[cols_to_show]
 
                             if 'LOG TIME' in df.columns:
                                 df['LOG TIME'] = df['LOG TIME'].dt.strftime('%Y-%m-%d %H:%M:%S')
 
-                            if data_type != 'spectral':
+                            if data_type not in ['spectral', 'exposure']:
                                 for analyte in selected_analytes:
                                     if analyte in df.columns:
                                         dec_pls = analyte_dec_pls.get(analyte, 2)
@@ -377,13 +355,15 @@ def generate_pdf_report(incident_path, parent_widget=None):
                                 table[0, j].set_facecolor(header_color)
                                 table[0, j].set_text_props(weight='bold', color='white')
 
-                        elif form == 'Chart' and data_type != 'spectral':
+                        elif form == 'Chart' and data_type not in ['spectral', 'exposure']:
                             ax = fig.add_axes([0.1, 0.08, 0.8, 0.78])
                             df = filtered_df.copy().dropna(subset=['LOG TIME']).sort_values(by='LOG TIME')
                             valid_analytes = [g for g in selected_analytes if g in df.columns]
                             group_col = 'DEVICE' if group_by == 'Device' else 'SITE'
+
                             if group_col == 'SITE':
                                 df = df[df['SITE'].notna() & (df['SITE'].astype(str).str.strip() != '') & (df['SITE'].astype(str).str.strip().str.lower() != 'unassigned')]
+
                             for group_val in df[group_col].unique():
                                 group_df = df[df[group_col] == group_val]
                                 for analyte in valid_analytes:
@@ -426,37 +406,87 @@ def generate_pdf_report(incident_path, parent_widget=None):
                         elif form == 'Summary Chart' and data_type != 'spectral':
                             ax = fig.add_axes([0.1, 0.08, 0.8, 0.78])
                             group_col = 'DEVICE' if group_by == 'Device' else 'SITE'
-                            valid_analytes = [g for g in selected_analytes if g in filtered_df.columns]
-                            rows_data = []
-                            for group_val in filtered_df[group_col].dropna().unique():
-                                group_df = filtered_df[filtered_df[group_col] == group_val]
-                                for analyte in valid_analytes:
-                                    analyte_data = group_df[analyte].dropna()
-                                    if len(analyte_data) > 0:
-                                        rows_data.append({'Group': str(group_val), 'Analyte': analyte, 'Mean': analyte_data.mean()})
+                            if data_type == 'exposure':
+                                group_col = 'DEVICE'
+                                valid_analytes = [
+                                    g for g in selected_analytes 
+                                    if f"{g}_min" in filtered_df.columns or 
+                                    f"{g}_max" in filtered_df.columns or 
+                                    f"{g}_mean" in filtered_df.columns
+                                ]
+                                rows_data = []
+                            
+                                for group_val in filtered_df[group_col].dropna().unique():
+                                    group_df = filtered_df[filtered_df[group_col] == group_val]
+                                    for analyte in valid_analytes:
+                                        mean_col = f"{analyte}_mean"
+                                        mean_v = group_df[mean_col].iloc[0] if mean_col in group_df.columns and not group_df[mean_col].empty else np.nan
+                                        if pd.notna(mean_v):
+                                            rows_data.append({'Group': str(group_val), 'Analyte': analyte, 'Mean': mean_v})
+                            else:
+                                valid_analytes = [g for g in selected_analytes if g in filtered_df.columns]
+                                rows_data = []
+                                for group_val in filtered_df[group_col].dropna().unique():
+                                    group_df = filtered_df[filtered_df[group_col] == group_val]
+                                    for analyte in valid_analytes:
+                                        analyte_data = group_df[analyte].dropna()
+                                        if len(analyte_data) > 0:
+                                            rows_data.append({'Group': str(group_val), 'Analyte': analyte, 'Mean': analyte_data.mean()})
+
                             if rows_data:
                                 pivot_df = pd.DataFrame(rows_data).pivot(index='Group', columns='Analyte', values='Mean')
                                 pivot_df.plot(kind='bar', ax=ax, alpha=0.8)
                                 ax.set_ylabel('Mean')
-                                ax.set_xlabel(group_by)
+                                ax.set_xlabel('Identifier' if data_type == 'exposure' else group_by)
                                 ax.legend(title='Analyte')
                                 ax.grid(True, linestyle='--', alpha=0.6, axis='y')
 
                         elif form == 'Summary Table' and data_type != 'spectral':
                             ax = fig.add_axes([0.05, 0.06, 0.9, 0.80])
                             group_col = 'DEVICE' if group_by == 'Device' else 'SITE'
-                            valid_analytes = [g for g in selected_analytes if g in filtered_df.columns]
-                            rows_data = []
-                            for group_val in filtered_df[group_col].dropna().unique():
-                                group_df = filtered_df[filtered_df[group_col] == group_val]
-                                for analyte in valid_analytes:
-                                    analyte_data = group_df[analyte].dropna()
-                                    if len(analyte_data) > 0:
-                                        dec_pls = analyte_dec_pls.get(analyte, 2)
-                                        rows_data.append([str(group_val), analyte, f"{analyte_data.min():.{dec_pls}f}", f"{analyte_data.max():.{dec_pls}f}", f"{analyte_data.mean():.{dec_pls}f}", len(analyte_data)])
+                            if data_type == 'exposure':
+                                group_col = 'DEVICE'
+                                valid_analytes = [
+                                    g for g in selected_analytes 
+                                    if f"{g}_min" in filtered_df.columns or 
+                                    f"{g}_max" in filtered_df.columns or 
+                                    f"{g}_mean" in filtered_df.columns
+                                ]
+                                rows_data = []
+                            
+                                for group_val in filtered_df[group_col].dropna().unique():
+                                    group_df = filtered_df[filtered_df[group_col] == group_val]
+                                    for analyte in valid_analytes:
+                                        min_col = f"{analyte}_min"
+                                        max_col = f"{analyte}_max"
+                                        mean_col = f"{analyte}_mean"
+                                        
+                                        min_v = group_df[min_col].iloc[0] if min_col in group_df.columns and not group_df[min_col].empty else np.nan
+                                        max_v = group_df[max_col].iloc[0] if max_col in group_df.columns and not group_df[max_col].empty else np.nan
+                                        mean_v = group_df[mean_col].iloc[0] if mean_col in group_df.columns and not group_df[mean_col].empty else np.nan
+                                        
+                                        if pd.notna(min_v) or pd.notna(max_v) or pd.notna(mean_v):
+                                            dec_pls = analyte_dec_pls.get(analyte, 2)
+                                            min_str = f"{min_v:.{dec_pls}f}" if pd.notna(min_v) else ""
+                                            max_str = f"{max_v:.{dec_pls}f}" if pd.notna(max_v) else ""
+                                            mean_str = f"{mean_v:.{dec_pls}f}" if pd.notna(mean_v) else ""
+                                            count_val = len(group_df)
+                                            rows_data.append([str(group_val), analyte, min_str, max_str, mean_str, str(count_val)])
+                            else:
+                                valid_analytes = [g for g in selected_analytes if g in filtered_df.columns]
+                                rows_data = []
+                                for group_val in filtered_df[group_col].dropna().unique():
+                                    group_df = filtered_df[filtered_df[group_col] == group_val]
+                                    for analyte in valid_analytes:
+                                        analyte_data = group_df[analyte].dropna()
+                                        if len(analyte_data) > 0:
+                                            dec_pls = analyte_dec_pls.get(analyte, 2)
+                                            rows_data.append([str(group_val), analyte, f"{analyte_data.min():.{dec_pls}f}", f"{analyte_data.max():.{dec_pls}f}", f"{analyte_data.mean():.{dec_pls}f}", len(analyte_data)])
+
                             if rows_data:
                                 ax.axis('off')
-                                table = ax.table(cellText=rows_data, colLabels=['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count'], cellLoc='center', loc='center')
+                                col_labels = ['Identifier', 'Analyte', 'Min', 'Max', 'Mean', 'Count'] if data_type == 'exposure' else ['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count']
+                                table = ax.table(cellText=rows_data, colLabels=col_labels, cellLoc='center', loc='center')
                                 table.auto_set_font_size(False)
                                 table.set_fontsize(9)
                                 table.scale(1, 1.5)
@@ -464,24 +494,29 @@ def generate_pdf_report(incident_path, parent_widget=None):
                                     table[0, j].set_facecolor('#2196F3')
                                     table[0, j].set_text_props(weight='bold', color='white')
 
-                        elif form == 'Summary Map' and data_type != 'spectral':
+                        elif form == 'Summary Map' and data_type not in ['spectral', 'exposure']:
                             ax = fig.add_axes([0.1, 0.08, 0.8, 0.78])
                             maps_data = spot_maps_data if data_type == 'spot' else area_maps_data
                             map_filenames = list(maps_data.keys())
+
                             if map_filenames:
                                 selected_map = map_filenames[0]
                                 selected_analyte = selected_analytes[0] if selected_analytes else None
                                 img_path = os.path.join(incident_path, "mapping", selected_map)
+
                                 if os.path.exists(img_path):
                                     img = plt.imread(img_path)
                                     ax.imshow(img)
+
                                     if selected_analyte and selected_analyte in filtered_df.columns and 'SITE' in filtered_df.columns:
                                         site_aggs = filtered_df.groupby('SITE')[selected_analyte].agg(['mean']).reset_index()
                                         site_aggs.columns = ['SITE', 'Mean']
+
                                         for m in maps_data.get(selected_map, []):
                                             label, x, y = m.get('label', ''), m.get('x', 0), m.get('y', 0)
                                             site_row = site_aggs[site_aggs['SITE'] == label]
                                             text = f"{site_row.iloc[0]['Mean']:.{analyte_dec_pls.get(selected_analyte, 2)}f}" if not site_row.empty else "N/A"
+
                                             circle = Circle((x, y), 8, color='yellow', ec='red', lw=2, zorder=5)
                                             ax.add_patch(circle)
                                             ax.text(x + 12, y + 5, f"{label}: {text}", color='black', fontsize=9, fontweight='bold', bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=1), zorder=6)
