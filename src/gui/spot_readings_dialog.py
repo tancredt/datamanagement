@@ -129,9 +129,9 @@ class SpotReadingsDialog(QDialog):
     def __init__(self, parent=None, incident_path=None):
         super().__init__(parent)
         self.incident_path = incident_path
-        self.manager = LocationManager(incident_path, mode="spot")
+        self.manager = LocationManager(incident_path)
         self.mapping_dir = os.path.join(incident_path, "mapping") # Added mapping dir
-        self.all_readings = self.manager.get_flat_readings()
+        self.all_readings = self.manager.get_flat_readings(reading_type="spot")
         self.available_labels = self.manager.get_available_labels()
         self.available_analytes = []
         self.analyte_dec_pls = {}
@@ -351,7 +351,7 @@ class SpotReadingsDialog(QDialog):
 
     def _save_data(self):
         try:
-            self.manager.set_flat_readings(self.all_readings, self.available_analytes)
+            self.manager.set_flat_readings(self.all_readings, self.available_analytes, reading_type="spot")
             logger.info("✅ Saved spot readings to spot_locations.json")
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save spot readings:\n{e}")

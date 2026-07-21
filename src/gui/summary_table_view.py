@@ -7,28 +7,37 @@ from PySide6.QtWidgets import (
     QPushButton, QMessageBox, QFileDialog, QHeaderView
 )
 from PySide6.QtGui import QColor
+
+# Import the new self-contained base class
 from base_view import DataView
 
 THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
 
+
 class NumericTableWidgetItem(QTableWidgetItem):
-    def __lt__(self, other):
+    """Custom item that sorts numerically instead of alphabetically."""
+    def lt(self, other):
         try:
             return float(self.text()) < float(other.text())
         except ValueError:
-            return super().__lt__(other)
+            return super().lt(other)
+
 
 class SummaryTableView(DataView):
-    def __init__(self, analyte_dec_pls, parent=None):
-        super().__init__(parent)
-        self.analyte_dec_pls = analyte_dec_pls
+    """
+    Self-contained summary table view.
+    Loads its own raw data, filters, and configs from disk.
+    """
+    def __init__(self, incident_path, data_type, parent=None):
+        super().__init__(incident_path, data_type, parent)
         self.summary_data = []
-        self.filter_summary = {}
         self._setup_ui()
+        self._render()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        
         self.summary_table = QTableWidget()
         self.summary_table.setColumnCount(6)
         self.summary_table.setHorizontalHeaderLabels(["Group", "Analyte", "Minimum", "Maximum", "Mean", "Count"])
@@ -37,8 +46,8 @@ class SummaryTableView(DataView):
         self.summary_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.summary_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.summary_table.setSortingEnabled(True)
+        
         layout.addWidget(self.summary_table)
-        # Removed bottom layout and export button completely
 
     def export(self):
         """Satisfies the DataView interface. Exports the summary data to CSV."""
@@ -49,7 +58,7 @@ class SummaryTableView(DataView):
         group_by_name = self.filter_summary.get("group_by", "Device")
         if self.filter_summary.get("data_type") == "exposure":
             group_by_name = "Identifier"
-
+            
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Export Summary to CSV", "summary_data.csv", "CSV Files (*.csv);;All Files (*)"
         )
@@ -66,38 +75,36 @@ class SummaryTableView(DataView):
                 QMessageBox.critical(self, "Error", f"Failed to export summary:\n{e}")
 
     def get_summary_data(self):
-        """Returns the calculated data so the Chart View can use it."""
+        """Returns the calculated data so the Chart View or Report Generator can use it."""
         return self.summary_data
 
-    def update_data(self, filtered_data, filter_summary, available_analytes, get_active_thresholds_func):
-        """Calculates statistics and populates the table."""
-        self.filter_summary = filter_summary # Store for export
-        
-        if filtered_data is None or filtered_data.empty:
+    def _render(self):
+        """Calculates statistics and populates the table using base class state."""
+        if self.filtered_data is None or self.filtered_data.empty:
             self.summary_table.setRowCount(0)
             self.summary_data = []
             return
             
-        df = filtered_data.copy()
-        is_exposure = filter_summary.get("data_type") == "exposure"
+        df = self.filtered_data.copy()
+        is_exposure = self.filter_summary.get("data_type") == "exposure"
         
         # Determine grouping column and label
         if is_exposure:
             group_col = 'DEVICE'
             group_by_label = "Identifier"
         else:
-            group_by = filter_summary.get("group_by", "Device")
+            group_by = self.filter_summary.get("group_by", "Device")
             group_col = 'DEVICE' if group_by == "Device" else 'SITE'
             group_by_label = group_by
             
         # Determine valid analytes
         if is_exposure:
             valid_analytes = []
-            for g in available_analytes:
+            for g in self.available_analytes:
                 if f"{g}_min" in df.columns or f"{g}_max" in df.columns or f"{g}_mean" in df.columns:
                     valid_analytes.append(g)
         else:
-            selected_analytes = filter_summary.get("selected_analytes", available_analytes)
+            selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
             valid_analytes = [g for g in selected_analytes if g in df.columns]
             
         self.summary_table.setHorizontalHeaderLabels([group_by_label, "Analyte", "Minimum", "Maximum", "Mean", "Count"])
@@ -120,6 +127,7 @@ class SummaryTableView(DataView):
                     min_col = f"{analyte}_min"
                     max_col = f"{analyte}_max"
                     mean_col = f"{analyte}_mean"
+                    
                     min_v = group_df[min_col].iloc[0] if min_col in group_df.columns and not group_df[min_col].empty else np.nan
                     max_v = group_df[max_col].iloc[0] if max_col in group_df.columns and not group_df[max_col].empty else np.nan
                     mean_v = group_df[mean_col].iloc[0] if mean_col in group_df.columns and not group_df[mean_col].empty else np.nan
@@ -151,8 +159,9 @@ class SummaryTableView(DataView):
                             
         self.summary_table.setSortingEnabled(False)
         self.summary_table.setRowCount(len(rows_data))
-        active_thresholds = get_active_thresholds_func()
         
+        # Use base class method to get active thresholds
+        active_thresholds = self.get_active_thresholds()
         for row, (grp, analyte, min_v, max_v, mean_v, count_v, dec_pls) in enumerate(rows_data):
             self.summary_table.setItem(row, 0, QTableWidgetItem(grp))
             self.summary_table.setItem(row, 1, QTableWidgetItem(analyte))
@@ -177,19 +186,21 @@ class SummaryTableView(DataView):
         self.summary_table.setSortingEnabled(True)
         self.summary_data = rows_data
 
+    def update_data(self, *args, **kwargs):
+        """Alias for _render to satisfy the DataView interface."""
+        self._render()
+
     def _is_value_exceeding_threshold(self, analyte, value, active_thresholds):
+        """Checks if a value exceeds the threshold (handling O2 inversion)."""
         if analyte not in active_thresholds:
             return False
         if not isinstance(value, (int, float, np.floating, np.integer)):
             return False
         if pd.isna(value):
             return False
+            
         threshold = active_thresholds[analyte]
         if analyte.upper().startswith("O2"):
             return value < threshold
         else:
             return value > threshold
-
-    def get_summary_data(self):
-        """Returns the calculated data so the Chart View can use it."""
-        return self.summary_data

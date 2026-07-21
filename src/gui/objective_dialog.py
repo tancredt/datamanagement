@@ -27,9 +27,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 # Editable Tab Bar (double-click to rename)
-# ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 class EditableTabBar(QTabBar):
     """A QTabBar that emits a signal when a tab is double-clicked."""
     tabRenameRequested = Signal(int)
@@ -41,9 +41,9 @@ class EditableTabBar(QTabBar):
         else:
             super().mouseDoubleClickEvent(event)
 
-# ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 # Observation Widget
-# ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 class ObservationWidget(QWidget):
     """Widget for a single observation entry."""
     filter_requested = Signal(object)
@@ -61,7 +61,7 @@ class ObservationWidget(QWidget):
         self.data_type_combo = QComboBox()
         self.data_type_combo.addItems(["Spot Readings", "Area Readings", "Spectral Results", "Exposures"])
         self.data_type_combo.setMinimumWidth(130)
-        
+
         if data_type == "area":
             self.data_type_combo.setCurrentText("Area Readings")
         elif data_type == "spectral":
@@ -70,7 +70,7 @@ class ObservationWidget(QWidget):
             self.data_type_combo.setCurrentText("Exposures")
         else:
             self.data_type_combo.setCurrentText("Spot Readings")
-            
+
         self.data_type_combo.currentTextChanged.connect(self._on_data_type_changed)
         layout.addWidget(self.data_type_combo)
 
@@ -86,6 +86,7 @@ class ObservationWidget(QWidget):
         self.filter_button.setMinimumWidth(120)
         self.filter_button.clicked.connect(self._on_filter_clicked)
         layout.addWidget(self.filter_button)
+
         layout.addStretch()
 
         # Apply initial form state based on data type
@@ -101,11 +102,13 @@ class ObservationWidget(QWidget):
             self.data_type = "exposure"
         else:
             self.data_type = "spectral"
+
         self._update_form_for_data_type(self.data_type)
 
     def _update_form_for_data_type(self, data_type):
         """Forces Form combo to valid options based on data type."""
         self.form_combo.blockSignals(True)
+
         if data_type == "spectral":
             self.form_combo.clear()
             self.form_combo.addItem("Table")
@@ -127,6 +130,7 @@ class ObservationWidget(QWidget):
             else:
                 self.form_combo.setCurrentText("Table")
             self.form_combo.setEnabled(True)
+
         self.form_combo.blockSignals(False)
 
     def _on_filter_clicked(self):
@@ -166,14 +170,14 @@ class ObservationWidget(QWidget):
             self.filter_button.setText("Filter")
             self.filter_button.setStyleSheet("")
 
-# ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 # Objective Widget
-# ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 class ObjectiveWidget(QWidget):
     """Widget representing a single objective with all its fields."""
     filter_requested = Signal(object)
     delete_requested = Signal(object)
-    
+
     def __init__(self, objective_number=1, data_type="spot", parent=None):
         super().__init__(parent)
         self.objective_number = objective_number
@@ -195,17 +199,17 @@ class ObjectiveWidget(QWidget):
         self.status_combo.addItems(["Ongoing", "Complete"])
         self.status_combo.setMinimumWidth(120)
         status_layout.addWidget(self.status_combo)
-        status_layout.addSpacing(20)
 
+        status_layout.addSpacing(20)
         self.lbl_created = QLabel("Created: --")
         self.lbl_created.setStyleSheet("color: gray; font-size: 11px;")
         status_layout.addWidget(self.lbl_created)
-        status_layout.addSpacing(10)
 
+        status_layout.addSpacing(10)
         self.lbl_updated = QLabel("Updated: --")
         self.lbl_updated.setStyleSheet("color: gray; font-size: 11px;")
         status_layout.addWidget(self.lbl_updated)
-        
+
         # ── Delete Objective Button ──
         status_layout.addStretch()
         self.btn_delete = QPushButton("Delete Objective")
@@ -213,7 +217,7 @@ class ObjectiveWidget(QWidget):
         self.btn_delete.setCursor(Qt.PointingHandCursor)
         self.btn_delete.clicked.connect(lambda: self.delete_requested.emit(self))
         status_layout.addWidget(self.btn_delete)
-        
+
         main_layout.addLayout(status_layout)
 
         # Objective
@@ -265,14 +269,6 @@ class ObjectiveWidget(QWidget):
     def _forward_filter_request(self, observation_widget):
         self.filter_requested.emit(observation_widget)
 
-    def _handle_delete_request(self, objective_widget):
-        """Find the tab containing this widget and trigger the close/delete logic."""
-        for i in range(self.tab_widget.count()):
-            scroll_area = self.tab_widget.widget(i)
-            if scroll_area.widget() == objective_widget:
-                self._on_tab_close_requested(i)
-                return
-        
     def get_data(self):
         # Generate timestamps on save
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -294,9 +290,9 @@ class ObjectiveWidget(QWidget):
             'updated': self.updated
         }
 
-# ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 # Objective Dialog (using QTabWidget)
-# ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 class ObjectiveDialog(QDialog):
     """Main dialog for creating and managing air monitoring objectives."""
 
@@ -319,9 +315,9 @@ class ObjectiveDialog(QDialog):
         title = "Air Monitoring Objectives"
         if self.zone_name != "General":
             title += f" - {self.zone_name}"
+
         self.setWindowTitle(title)
         self.resize(950, 750)
-
         self._setup_ui()
         self._load_existing_data()
 
@@ -331,10 +327,12 @@ class ObjectiveDialog(QDialog):
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.setMovable(True)
+
         editable_bar = EditableTabBar()
         self.tab_widget.setTabBar(editable_bar)
         self.tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
         editable_bar.tabRenameRequested.connect(self._on_tab_rename_requested)
+
         main_layout.addWidget(self.tab_widget)
 
         btn_layout = QHBoxLayout()
@@ -343,6 +341,7 @@ class ObjectiveDialog(QDialog):
         add_obj_btn.setStyleSheet("QPushButton { font-weight: bold; font-size: 13px; }")
         add_obj_btn.clicked.connect(lambda: self.add_objective())
         btn_layout.addWidget(add_obj_btn)
+
         btn_layout.addStretch()
 
         save_btn = QPushButton("Save")
@@ -364,6 +363,7 @@ class ObjectiveDialog(QDialog):
             tab_title = None
 
         self.objective_count += 1
+
         if tab_title is None:
             tab_title = f"Objective {self.objective_count}"
 
@@ -400,6 +400,7 @@ class ObjectiveDialog(QDialog):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         scroll.setWidget(obj_widget)
+
         index = self.tab_widget.addTab(scroll, tab_title)
         self.tab_widget.setCurrentIndex(index)
 
@@ -420,6 +421,14 @@ class ObjectiveDialog(QDialog):
         )
         if ok and new_name.strip():
             self.tab_widget.setTabText(index, new_name.strip())
+
+    def _handle_delete_request(self, objective_widget):
+        """Find the tab containing this widget and trigger the close/delete logic."""
+        for i in range(self.tab_widget.count()):
+            scroll_area = self.tab_widget.widget(i)
+            if scroll_area.widget() == objective_widget:
+                self._on_tab_close_requested(i)
+                return
 
     def _load_existing_data(self):
         if not self.objectives_file or not os.path.exists(self.objectives_file):
@@ -479,173 +488,34 @@ class ObjectiveDialog(QDialog):
                 f"Successfully saved {len(all_data)} objective(s) to:\n{self.objectives_file}"
             )
             self.accept()
+
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save objectives:\n{e}")
 
     # ── Filter Handling ──────────────────────────────────
-    def _load_filter_data(self, data_type="spot"):
-        if not self.incident_path:
-            return {}
-
-        incident_path = self.incident_path
-
-        # Load analytes strictly from static config.
-        analyte_config_path = os.path.normpath(
-            os.path.join(current_dir, '..', 'static', 'lists', 'analytes.json')
-        )
-        available_analytes = []
-        analyte_dec_pls = {}
-        if os.path.exists(analyte_config_path):
-            try:
-                with open(analyte_config_path, 'r', encoding='utf-8') as f:
-                    analyte_config = json.load(f)
-                    analytes_list = analyte_config.get("analytes", [])
-                    for analyte in analytes_list:
-                        clean_analyte = {k.strip(): str(v).strip() for k, v in analyte.items()}
-                        name = clean_analyte.get("name")
-                        dec_pls = clean_analyte.get("dec_pls", 2)
-                        if name:
-                            available_analytes.append(name)
-                            try:
-                                analyte_dec_pls[name] = int(dec_pls)
-                            except (ValueError, TypeError):
-                                analyte_dec_pls[name] = 2
-            except Exception as e:
-                print(f"Failed to load analytes config: {e}")
-
-        thresholds_lookup = {}
-        thresholds_file = os.path.join(incident_path, "meta", "thresholds.json")
-        if os.path.exists(thresholds_file):
-            try:
-                with open(thresholds_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    thresholds_list = data.get("thresholds", [])
-                    for t in thresholds_list:
-                        clean = {k.strip(): v for k, v in t.items()}
-                        analyte_name = str(clean.get("analyte", "")).strip()
-                        if analyte_name:
-                            entry = {}
-                            for key in ["hotzone_value", "warmzone_value", "fireground_value", "community_value"]:
-                                raw = clean.get(key, "0")
-                                try:
-                                    entry[key] = float(str(raw).strip())
-                                except (ValueError, TypeError):
-                                    entry[key] = 0.0
-                            thresholds_lookup[analyte_name.upper()] = entry
-            except Exception as e:
-                print(f"Failed to load thresholds: {e}")
-
-        raw_data = pd.DataFrame()
-        area_file = os.path.join(incident_path, "data", "processed", "area_data.csv")
-        spot_file = os.path.join(incident_path, "mapping", "spot_locations.json")
-        spectral_file = os.path.join(incident_path, "mapping", "spectral_locations.json")
-        exposures_file = os.path.join(incident_path, "data", "exposures", "exposures.json")
-
-        if data_type == "area" and os.path.exists(area_file):
-            try:
-                raw_data = pd.read_csv(area_file)
-                raw_data['LOG TIME'] = pd.to_datetime(raw_data['LOG TIME'], errors='coerce')
-            except Exception as e:
-                print(f"Failed to load area data: {e}")
-        elif data_type == "spot" and os.path.exists(spot_file):
-            try:
-                with open(spot_file, 'r', encoding='utf-8') as f:
-                    spot_json = json.load(f)
-                rows = []
-                maps_dict = spot_json.get("maps", {})
-                locations_list = maps_dict.get("locations", [])
-                for loc in locations_list:
-                    markers = loc.get("markers", [])
-                    for marker in markers:
-                        label = marker.get("label", "")
-                        site = label if label else "Unassigned"
-                        readings = marker.get("readings", [])
-                        for r in readings:
-                            clean_r = {k.strip(): v for k, v in r.items()}
-                            row = {
-                                "LOG TIME": clean_r.get("datetime"),
-                                "DEVICE": clean_r.get("device", ""),
-                                "SITE": site,
-                                "observations": clean_r.get("observations", ""),
-                                "Latitude": np.nan,
-                                "Longitude": np.nan
-                            }
-                            for analyte in available_analytes:
-                                row[analyte] = clean_r.get(analyte)
-                                row[f"INVALID_{analyte}"] = 0
-                            rows.append(row)
-                raw_data = pd.DataFrame(rows)
-                if not raw_data.empty:
-                    raw_data['LOG TIME'] = pd.to_datetime(raw_data['LOG TIME'], errors='coerce')
-            except Exception as e:
-                print(f"Failed to load spot data: {e}")
-        elif data_type == "spectral" and os.path.exists(spectral_file):
-            try:
-                with open(spectral_file, 'r', encoding='utf-8') as f:
-                    spectral_json = json.load(f)
-                rows = []
-                maps_dict = spectral_json.get("maps", {})
-                locations_list = maps_dict.get("locations", [])
-                for loc in locations_list:
-                    markers = loc.get("markers", [])
-                    for marker in markers:
-                        label = marker.get("label", "")
-                        site = label if label else "Unassigned"
-                        readings = marker.get("readings", [])
-                        for r in readings:
-                            clean_r = {k.strip(): v for k, v in r.items()}
-                            row = {
-                                "LOG TIME": clean_r.get("datetime"),
-                                "DEVICE": clean_r.get("device", ""),
-                                "SITE": site,
-                                "chemicals_identified": clean_r.get("chemicals_identified", ""),
-                                "comments": clean_r.get("comments", ""),
-                                "file_ref": clean_r.get("file_ref", "")
-                            }
-                            rows.append(row)
-                raw_data = pd.DataFrame(rows)
-                if not raw_data.empty:
-                    raw_data['LOG TIME'] = pd.to_datetime(raw_data['LOG TIME'], errors='coerce')
-            except Exception as e:
-                print(f"Failed to load spectral data: {e}")
-        elif data_type == "exposure" and os.path.exists(exposures_file):
-            try:
-                from datamanagement.reader import read_exposure_data
-                raw_data = read_exposure_data(incident_path)
-            except Exception as e:
-                print(f"Failed to load exposure data: {e}")
-
-        return {
-            'raw_data': raw_data,
-            'analyte_dec_pls': analyte_dec_pls,
-            'thresholds_lookup': thresholds_lookup
-        }
-
     def _handle_filter_request(self, observation_widget):
+        """Opens the FilterDialog in 'objective' mode (doesn't save to disk)."""
         if FilterDialog is None:
             QMessageBox.warning(self, "Missing Module", "filter_dialog.py could not be imported.")
             return
 
-        data = self._load_filter_data(data_type=observation_widget.data_type)
-        if not data or data.get('raw_data') is None or data.get('raw_data').empty:
-            QMessageBox.warning(self, "No Data", "No raw data available for filtering.")
-            return
-
+        # The FilterDialog now loads its own data and configs from disk
+        # We just pass incident_path, data_type, and mode="objective"
         current_filters = observation_widget.filter_data or {}
+
         filter_dlg = FilterDialog(
             parent=self,
             incident_path=self.incident_path,
-            raw_data=data.get('raw_data'),
-            analyte_dec_pls=data.get('analyte_dec_pls', {}),
-            thresholds_lookup=data.get('thresholds_lookup', {}),
-            initial_filters=current_filters,
-            data_type=observation_widget.data_type
+            data_type=observation_widget.data_type,
+            mode="objective",  # Don't save to disk
+            initial_filters=current_filters
         )
 
         if filter_dlg.exec() == QDialog.Accepted:
             new_filters = filter_dlg.get_filters()
-            json_filters = new_filters.copy()
 
+            # Serialize for JSON storage in the objective
+            json_filters = new_filters.copy()
             if hasattr(json_filters.get('start_time'), 'strftime'):
                 json_filters['start_time'] = json_filters['start_time'].strftime("%Y-%m-%d %H:%M")
             if hasattr(json_filters.get('stop_time'), 'strftime'):

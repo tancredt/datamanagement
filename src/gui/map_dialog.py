@@ -162,18 +162,18 @@ class MarkerInfoDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
-    def get_data(self, mode=None, existing_data=None):
+    def get_data(self, existing_data=None): # Removed 'mode'
         data = {
-            "label": self.lbl_label.text().strip(),
-            "description": self.txt_desc.toPlainText().strip(),
-            "coordinates": {"latitude": self._lat, "longitude": self._lon}
-        }
+           "label": self.lbl_label.text().strip(),
+           "description": self.txt_desc.toPlainText().strip(),
+           "coordinates": {"latitude": self._lat, "longitude": self._lon}
+       }
         if existing_data:
-            if "readings" in existing_data: data["readings"] = existing_data["readings"]
-            if "device_log" in existing_data: data["device_log"] = existing_data["device_log"]
+           data["readings"] = existing_data.get("readings", [])
+           data["device_log"] = existing_data.get("device_log", [])
         else:
-            if mode in ("spot", "spectral"): data["readings"] = []
-            elif mode == "area": data["device_log"] = []
+           data["readings"] = []      # Initialize both for new markers
+           data["device_log"] = []
         return data
 
 class MapCanvas(QWidget):
@@ -279,20 +279,18 @@ class MapCanvas(QWidget):
         self.setCursor(Qt.ClosedHandCursor)
 
 class MapEditorDialog(QDialog):
-    def __init__(self, parent=None, incident_path=None, mode="spot"):
+    def __init__(self, parent=None, incident_path=None):  # ✅ Removed 'mode'
         super().__init__(parent)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
         self.incident_path = incident_path
-        self.mode = mode
         self.mapping_dir = os.path.join(incident_path, "mapping") if incident_path else None
-        
-        # Use LocationManager for all JSON operations
-        self.manager = LocationManager(incident_path, mode=mode)
+
+        self.manager = LocationManager(incident_path)  # ✅ Unified
         self.manager.ensure_structure()
         self.maps_data = self.manager.get_maps_data()
         self.current_map_file = None
 
-        self.setWindowTitle(f"Map Editor - {mode.title()} Locations")
+        self.setWindowTitle("Map Editor")  # ✅ Simplified title
         self.resize(900, 700)
         self._setup_ui()
         self._populate_maps_combo()
@@ -403,7 +401,7 @@ class MapEditorDialog(QDialog):
         
         dialog = MarkerInfoDialog(self, default_label=next_label, current_map_labels=all_used_labels)
         if dialog.exec() == QDialog.Accepted:
-            self.canvas._pending_data = dialog.get_data(mode=self.mode)
+            self.canvas._pending_data = dialog.get_data()
             self.canvas.setCursor(Qt.CrossCursor)
 
     def _on_edit_marker(self, idx):
@@ -412,7 +410,7 @@ class MapEditorDialog(QDialog):
         
         dialog = MarkerInfoDialog(self, edit_data=marker, current_map_labels=all_used_labels)
         if dialog.exec() == QDialog.Accepted:
-            new_data = dialog.get_data(mode=self.mode, existing_data=marker)
+            new_data = dialog.get_data(existing_data=marker)
             new_label = new_data["label"]
             old_label = marker.get("label")
             

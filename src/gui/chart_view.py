@@ -1,9 +1,6 @@
 import os
 import sys
 import pandas as pd
-import os
-import sys
-import pandas as pd
 import matplotlib
 matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
@@ -16,10 +13,12 @@ from base_view import DataView
 
 THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
 
+
 class ChartView(DataView):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, incident_path, data_type, parent=None):
+        super().__init__(incident_path, data_type, parent)
         self._setup_ui()
+        self._render()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -29,7 +28,10 @@ class ChartView(DataView):
         self.toolbar = NavigationToolbar(self.canvas, self)
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas, stretch=1)
-        # Removed self.btn_export_chart completely
+
+    def render_to_figure(self):
+        """Returns the existing Matplotlib figure directly."""
+        return self.figure
 
     def export(self):
         """Exports the current Matplotlib figure to a PNG file."""
@@ -43,20 +45,18 @@ class ChartView(DataView):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export chart:\n{e}")
 
-    def update_data(self, filtered_data, filter_summary, available_analytes, get_active_thresholds_func):
-        """Satisfies the DataView interface by calling the plotting logic."""
-        self.plot_data(filtered_data, filter_summary, available_analytes, get_active_thresholds_func)
-
-    def plot_data(self, filtered_data, filter_summary, available_analytes, get_active_thresholds_func):
+    def _render(self):
+        """Render the chart with current filtered_data."""
         self.ax.clear()
-        if filtered_data is None or filtered_data.empty:
+        print(self.filtered_data)
+        if self.filtered_data is None or self.filtered_data.empty:
             self.ax.text(0.5, 0.5, "No data matches the current filters.",
                          horizontalalignment='center', verticalalignment='center',
                          transform=self.ax.transAxes)
             self.canvas.draw()
             return
 
-        df = filtered_data.copy()
+        df = self.filtered_data.copy()
         time_col = 'LOG TIME'
         if time_col not in df.columns:
             self.canvas.draw()
@@ -66,14 +66,15 @@ class ChartView(DataView):
         df = df.dropna(subset=[time_col])
         df = df.sort_values(by=time_col)
 
-        selected_analytes = filter_summary.get("selected_analytes", available_analytes)
+        # ── Use base class state ──
+        selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
         valid_analytes = [g for g in selected_analytes if g in df.columns]
         if not valid_analytes:
             self.canvas.draw()
             return
 
         # Fix: Use case-insensitive comparison and ensure uppercase column names
-        group_by = str(filter_summary.get("group_by", "Device")).strip()
+        group_by = str(self.filter_summary.get("group_by", "Device")).strip()
         if group_by.lower() == "device":
             group_col = 'DEVICE'
         elif group_by.lower() == "site":
@@ -111,7 +112,8 @@ class ChartView(DataView):
                     self.ax.plot(plot_df[time_col], plot_df[analyte], marker='.', linestyle='-',
                                  label=label, markersize=4)
 
-        active_thresholds = get_active_thresholds_func()
+        # ── Use base class method to get active thresholds ──
+        active_thresholds = self.get_active_thresholds()
         if active_thresholds:
             for analyte, threshold_val in active_thresholds.items():
                 if analyte in valid_analytes:
@@ -127,8 +129,8 @@ class ChartView(DataView):
         self.ax.set_title('Filtered Analyte Readings Over Time')
         self.figure.autofmt_xdate()
 
-        start_str = filter_summary.get("start_time", "")
-        stop_str = filter_summary.get("stop_time", "")
+        start_str = self.filter_summary.get("start_time", "")
+        stop_str = self.filter_summary.get("stop_time", "")
         if start_str and start_str != "All":
             start_dt = pd.to_datetime(start_str)
             stop_dt = pd.to_datetime(stop_str)
@@ -154,3 +156,7 @@ class ChartView(DataView):
         self.ax.grid(True, linestyle='--', alpha=0.6)
         self.figure.tight_layout()
         self.canvas.draw()
+
+    def update_data(self, *args, **kwargs):
+        """Alias for _render for compatibility."""
+        self._render()

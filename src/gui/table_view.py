@@ -20,9 +20,10 @@ if parent_dir not in sys.path:
 INVALID_BG_COLOR = QColor(255, 200, 200)
 THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
 
-# ─────────────────────────────────────────────────────────
-# Paginated Table Model (Embedded to avoid import issues)
-# ─────────────────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────
+# Paginated Table Model
+# ──────────────────────────────────────────────────────────
 class PaginatedTableModel(QAbstractTableModel):
     def __init__(self, dec_pls_dict=None, page_size=100):
         super().__init__()
@@ -156,26 +157,28 @@ class PaginatedTableModel(QAbstractTableModel):
                 return str(section + 1 + self.current_page * self.page_size)
         return None
 
-# ─────────────────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────
 # Table View Widget
-# ─────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 class TableView(DataView):
-    def __init__(self, analyte_dec_pls, parent=None):
-        super().__init__(parent)
-        self.analyte_dec_pls = analyte_dec_pls
+    def __init__(self, incident_path, data_type, parent=None):
+        super().__init__(incident_path, data_type, parent)
         self.model = None
         self._setup_ui()
+        self._render()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        
         self.table_view = QTableView()
         self.table_view.setAlternatingRowColors(True)
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table_view.verticalHeader().setVisible(False)
         layout.addWidget(self.table_view, stretch=1)
-
-        # Bottom Controls (Export button completely removed)
+        
+        # Bottom Controls
         bottom_layout = QHBoxLayout()
         self.btn_prev_page = QPushButton("Previous")
         self.lbl_page_info = QLabel("Page 0 of 0")
@@ -201,7 +204,6 @@ class TableView(DataView):
         if file_path:
             try:
                 export_df = self.model._full_df.copy()
-                # Drop INVALID_ columns before exporting
                 inv_cols = [c for c in export_df.columns if c.upper().startswith('INVALID_')]
                 export_df.drop(columns=inv_cols, inplace=True, errors='ignore')
                 export_df.to_csv(file_path, index=False)
@@ -209,44 +211,44 @@ class TableView(DataView):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export table:\n{e}")
 
-    def set_data(self, df, show_invalid_bg=True, active_thresholds=None):
+    def _render(self):
+        """Render the table with current filtered_data."""
         if self.model is None:
             self.model = PaginatedTableModel(dec_pls_dict=self.analyte_dec_pls, page_size=100)
             self.table_view.setModel(self.model)
+        
+        # Use base class state
+        show_invalid_bg = not self.filter_summary.get("only_valid", False)
         self.model.set_show_invalid_bg(show_invalid_bg)
-        self.model.set_active_thresholds(active_thresholds or {})
-        self.model.set_data(df)
+        self.model.set_active_thresholds(self.get_active_thresholds())
+        self.model.set_data(self.filtered_data)
         self._update_table()
 
-    def connect_signals(self, prev_callback, next_callback):
-        # Export callback removed since it's handled globally via the DataView interface now
-        self.btn_prev_page.clicked.connect(prev_callback)
-        self.btn_next_page.clicked.connect(next_callback)
-
     def update_data(self, *args, **kwargs):
-        """Satisfies the DataView interface."""
-        self.set_data(*args, **kwargs)
+        """Alias for _render for compatibility."""
+        self._render()
 
     def _update_table(self):
         if self.model.total_pages > 0:
             self.lbl_page_info.setText(f"Page {self.model.current_page + 1} of {self.model.total_pages}")
         else:
             self.lbl_page_info.setText("Page 0 of 0")
-
+            
         self.btn_prev_page.setEnabled(self.model.current_page > 0)
         self.btn_next_page.setEnabled(self.model.current_page < self.model.total_pages - 1)
-
+        
         header = self.table_view.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
-
+        
         if not hasattr(self.model, '_current_df') or self.model._current_df.empty:
             return
-
+            
         cols = list(self.model._current_df.columns)
         for i, col in enumerate(cols):
             if col.upper().startswith("INVALID_"):
                 self.table_view.setColumnHidden(i, True)
                 continue
+                
             self.table_view.setColumnHidden(i, False)
             if col == 'LOG TIME':
                 self.table_view.setColumnWidth(i, 160)
@@ -255,9 +257,10 @@ class TableView(DataView):
             elif col == 'SITE':
                 self.table_view.setColumnWidth(i, 120)
             elif col == 'observations':
-                self.table_view.setColumnWidth(i, 250) # Give observations a good width
+                self.table_view.setColumnWidth(i, 250)
             elif col in self.analyte_dec_pls:
                 self.table_view.setColumnWidth(i, 80)
             else:
                 self.table_view.setColumnWidth(i, 100)
+                
         header.setStretchLastSection(True)

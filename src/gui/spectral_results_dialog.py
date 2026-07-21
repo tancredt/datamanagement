@@ -109,9 +109,9 @@ class SpectralResultsDialog(QDialog):
     def __init__(self, parent=None, incident_path=None):
         super().__init__(parent)
         self.incident_path = incident_path
-        self.manager = LocationManager(incident_path, mode="spectral")
+        self.manager = LocationManager(incident_path)
         self.mapping_dir = os.path.join(incident_path, "mapping") # Added mapping dir
-        self.all_readings = self.manager.get_flat_readings()
+        self.all_readings = self.manager.get_flat_readings(reading_type="spectral")
         self.available_labels = self.manager.get_available_labels()
 
         self.setWindowTitle("Spectral Results Manager")
@@ -277,7 +277,7 @@ class SpectralResultsDialog(QDialog):
 
     def _save_data(self):
         try:
-            self.manager.set_flat_readings(self.all_readings)
+            self.manager.set_flat_readings(self.all_readings, reading_type="spectral")
             logger.info("✅ Saved spectral records to spectral_locations.json")
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save spectral records:\n{e}")

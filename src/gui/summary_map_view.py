@@ -9,11 +9,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPixmap, QPainter, QPen
 
-# Import the new base class
+# Import the new self-contained base class
 from base_view import DataView
+
 
 class SummaryMapCanvas(QWidget):
     """Custom widget to display a map image and overlay summary data at marker locations."""
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.pixmap = None
@@ -34,6 +36,7 @@ class SummaryMapCanvas(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        
         if self.pixmap and not self.pixmap.isNull():
             painter.drawPixmap(0, 0, self.pixmap)
         else:
@@ -45,34 +48,44 @@ class SummaryMapCanvas(QWidget):
 
         font = QFont("Arial", 10, QFont.Bold)
         painter.setFont(font)
+        
         for m in self.markers_data:
             x, y = m['x'], m['y']
             label = m['label']
             text = m['text']
+            
             painter.setPen(QPen(QColor("red"), 2))
             painter.setBrush(QColor("yellow"))
             painter.drawEllipse(x-8, y-8, 16, 16)
+            
             painter.setPen(QPen(QColor("black"), 1))
             painter.setBrush(Qt.NoBrush)
             display_text = f"{label}: {text}" if text else f"{label}: N/A"
             painter.drawText(x+12, y+5, display_text)
+        
         painter.end()
 
-class SummaryMapView(DataView): # <--- Inherit from DataView
-    def __init__(self, map_filenames, available_analytes, analyte_dec_pls, mapping_dir, maps_data, parent=None):
-        super().__init__(parent)
+
+class SummaryMapView(DataView):
+    """
+    Self-contained summary map view.
+    Loads its own raw data, filters, and configs from disk.
+    """
+    
+    def __init__(self, incident_path, data_type, map_filenames, mapping_dir, maps_data, parent=None):
+        super().__init__(incident_path, data_type, parent)
         self.map_filenames = map_filenames
-        self.available_analytes = available_analytes
-        self.analyte_dec_pls = analyte_dec_pls
         self.mapping_dir = mapping_dir
         self.maps_data = maps_data
-        self.filtered_data = None
+        self.plume_data = []
+        self.current_plume_index = 0
         self._setup_ui()
+        self._render()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-
+        
         # Create a stack to toggle between normal maps and plume animation
         self.stack = QStackedWidget()
         layout.addWidget(self.stack)
@@ -81,7 +94,7 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         self.normal_page = QWidget()
         normal_layout = QVBoxLayout(self.normal_page)
         normal_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         map_top_layout = QHBoxLayout()
         map_top_layout.addWidget(QLabel("<b>Map:</b>"))
         self.summary_map_combo = QComboBox()
@@ -89,22 +102,22 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         self.summary_map_combo.setMinimumWidth(150)
         self.summary_map_combo.currentTextChanged.connect(self._redraw)
         map_top_layout.addWidget(self.summary_map_combo)
-        
+
         map_top_layout.addWidget(QLabel("<b>Analyte:</b>"))
         self.summary_map_analyte_combo = QComboBox()
         self.summary_map_analyte_combo.addItems(self.available_analytes)
         self.summary_map_analyte_combo.setMinimumWidth(120)
         self.summary_map_analyte_combo.currentTextChanged.connect(self._redraw)
         map_top_layout.addWidget(self.summary_map_analyte_combo)
-        
         map_top_layout.addStretch()
-        
+
         self.summary_map_metric_group = QButtonGroup(self)
         self.rb_map_mean = QRadioButton("Mean")
         self.rb_map_max = QRadioButton("Max")
         self.rb_map_min = QRadioButton("Min")
         self.rb_map_count = QRadioButton("Count")
         self.rb_map_mean.setChecked(True)
+        
         self.summary_map_metric_group.addButton(self.rb_map_mean, 0)
         self.summary_map_metric_group.addButton(self.rb_map_max, 1)
         self.summary_map_metric_group.addButton(self.rb_map_min, 2)
@@ -117,13 +130,14 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         
         normal_layout.addLayout(map_top_layout)
         self.summary_map_metric_group.idClicked.connect(self._redraw)
-        
+
         self.summary_map_canvas = SummaryMapCanvas()
         map_scroll = QScrollArea()
         map_scroll.setWidgetResizable(False)
         map_scroll.setAlignment(Qt.AlignCenter)
         map_scroll.setWidget(self.summary_map_canvas)
         normal_layout.addWidget(map_scroll, stretch=1)
+        
         self.stack.addWidget(self.normal_page)
 
         # --- Page 1: Plume Slideshow View ---
@@ -134,12 +148,12 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         self.plume_title_label.setAlignment(Qt.AlignCenter)
         self.plume_title_label.setStyleSheet("font-size: 18px; font-weight: bold; padding: 10px")
         plume_layout.addWidget(self.plume_title_label)
-        
+
         self.plume_image_label = QLabel()
         self.plume_image_label.setAlignment(Qt.AlignCenter)
         self.plume_image_label.setStyleSheet("background-color: black;")
         plume_layout.addWidget(self.plume_image_label, stretch=1)
-        
+
         # Slideshow Control Bar
         control_layout = QHBoxLayout()
         self.btn_prev_plume = QPushButton("◀ Previous")
@@ -150,7 +164,7 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         btn_style = "QPushButton { padding: 6px 12px; font-weight: bold; }"
         for btn in [self.btn_prev_plume, self.btn_next_plume, self.btn_play_plume, self.btn_stop_plume]:
             btn.setStyleSheet(btn_style)
-            
+        
         self.btn_prev_plume.clicked.connect(self._plume_previous)
         self.btn_next_plume.clicked.connect(self._plume_next)
         self.btn_play_plume.clicked.connect(self._plume_play)
@@ -178,8 +192,6 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         # Animation timer (3000ms = 3 seconds)
         self.plume_timer = QTimer(self)
         self.plume_timer.timeout.connect(self._plume_next)
-        self.plume_data = []
-        self.current_plume_index = 0
 
     def export(self):
         """Satisfies the DataView interface. Routes to the correct export method."""
@@ -193,7 +205,7 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         if not selected_map:
             QMessageBox.warning(self, "No Map", "Please select a map to export.")
             return
-            
+
         default_name = os.path.splitext(selected_map)[0] + "_summary.png"
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Export Summary Map", default_name, "PNG Files (*.png);;JPEG Files (*.jpg);;All Files (*)"
@@ -212,11 +224,10 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         if not self.plume_data:
             QMessageBox.warning(self, "No Data", "No plume images loaded.")
             return
-            
+
         dt, filepath = self.plume_data[self.current_plume_index]
         local_dt = dt.replace(tzinfo=datetime.timezone.utc).astimezone()
         default_name = f"plume_{local_dt.strftime('%Y%m%d_%H%M')}.png"
-        
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Export Plume Image", default_name, "PNG Files (*.png);;All Files (*)"
         )
@@ -230,11 +241,18 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export plume image:\n{e}")
 
-    def update_data(self, filtered_data):
-        """Receives new filtered data and recalculates the map overlays."""
-        self.show_normal_map() # Ensure we are on the normal map page
-        self.filtered_data = filtered_data
+    def _render(self):
+        """Render the view with current filtered_data."""
+        if self.data_type == "plume":
+            # Plume data is handled separately via show_plume_animation()
+            return
+        
+        self.show_normal_map()
         self._redraw()
+
+    def update_data(self, *args, **kwargs):
+        """Alias for _render to satisfy the DataView interface."""
+        self._render()
 
     def show_normal_map(self):
         self.stack.setCurrentIndex(0)
@@ -245,7 +263,7 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         self.stack.setCurrentIndex(1)
         self.plume_data = plume_data
         self.current_plume_index = 0
-        self._plume_stop() 
+        self._plume_stop()
         
         if not self.plume_data:
             self.plume_title_label.setText("")
@@ -256,7 +274,7 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
             self.btn_next_plume.setEnabled(False)
             self.btn_play_plume.setEnabled(False)
             return
-            
+        
         self.btn_prev_plume.setEnabled(True)
         self.btn_next_plume.setEnabled(True)
         self.btn_play_plume.setEnabled(True)
@@ -265,12 +283,13 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
     def _show_current_plume_frame(self):
         if not self.plume_data:
             return
+
         dt, filepath = self.plume_data[self.current_plume_index]
         
         # dt is already in local time (naive), so we can format it directly
         local_time_str = dt.strftime('%Y-%m-%d %H:%M')
         self.plume_title_label.setText(f"Air Dispersion Prediction for {local_time_str}")
-        
+
         pixmap = QPixmap(filepath)
         if not pixmap.isNull():
             label_size = self.plume_image_label.size()
@@ -281,28 +300,31 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
                 self.plume_image_label.setPixmap(pixmap)
         else:
             self.plume_image_label.setText("Failed to load image")
-            
+
         self.plume_info_label.setText(
             f"Local Time: {dt.strftime('%Y-%m-%d %H:%M')} | Frame {self.current_plume_index + 1} of {len(self.plume_data)}"
         )
 
     def _plume_next(self):
-        if not self.plume_data: return
+        if not self.plume_data:
+            return
         self.current_plume_index += 1
         if self.current_plume_index >= len(self.plume_data):
             self.current_plume_index = 0
         self._show_current_plume_frame()
 
     def _plume_previous(self):
-        if not self.plume_data: return
+        if not self.plume_data:
+            return
         self.current_plume_index -= 1
         if self.current_plume_index < 0:
             self.current_plume_index = len(self.plume_data) - 1
         self._show_current_plume_frame()
 
     def _plume_play(self):
-        if not self.plume_data: return
-        self.plume_timer.start(3000) 
+        if not self.plume_data:
+            return
+        self.plume_timer.start(3000)
         self.btn_play_plume.setEnabled(False)
         self.btn_stop_plume.setEnabled(True)
 
@@ -312,13 +334,13 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
         self.btn_stop_plume.setEnabled(False)
 
     def _redraw(self):
+        """Redraws the map overlay based on current filtered_data."""
         selected_map = self.summary_map_combo.currentText()
         selected_analyte = self.summary_map_analyte_combo.currentText()
-        
         metric_id = self.summary_map_metric_group.checkedId()
         metric_map = {0: 'Mean', 1: 'Max', 2: 'Min', 3: 'Count'}
         metric_name = metric_map.get(metric_id, 'Mean')
-        
+
         if selected_map and selected_map in self.maps_data:
             pixmap_path = os.path.join(self.mapping_dir, selected_map)
             if os.path.exists(pixmap_path):
@@ -329,11 +351,16 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
             self.summary_map_canvas.set_image(QPixmap())
             self.summary_map_canvas.set_markers([])
             return
-            
+
         markers_data = []
         markers = self.maps_data.get(selected_map, [])
-        
-        if self.filtered_data is not None and not self.filtered_data.empty and 'SITE' in self.filtered_data.columns and selected_analyte in self.filtered_data.columns:
+
+        # Use base class state (self.filtered_data from DataView)
+        if (self.filtered_data is not None and 
+            not self.filtered_data.empty and 
+            'SITE' in self.filtered_data.columns and 
+            selected_analyte in self.filtered_data.columns):
+            
             site_aggs = self.filtered_data.groupby('SITE')[selected_analyte].agg(['min', 'max', 'mean', 'count']).reset_index()
             site_aggs.columns = ['SITE', 'Min', 'Max', 'Mean', 'Count']
             
@@ -352,10 +379,15 @@ class SummaryMapView(DataView): # <--- Inherit from DataView
                         text = f"{val:.{dec_pls}f}"
                 else:
                     text = "N/A"
-                    
+                
                 markers_data.append({'x': x, 'y': y, 'label': label, 'text': text})
         else:
             for m in markers:
-                markers_data.append({'x': m.get('x', 0), 'y': m.get('y', 0), 'label': m.get('label', ''), 'text': 'N/A'})
-                
+                markers_data.append({
+                    'x': m.get('x', 0), 
+                    'y': m.get('y', 0), 
+                    'label': m.get('label', ''), 
+                    'text': 'N/A'
+                })
+
         self.summary_map_canvas.set_markers(markers_data)

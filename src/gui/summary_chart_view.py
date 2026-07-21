@@ -4,33 +4,49 @@ import pandas as pd
 import matplotlib
 matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QRadioButton, QButtonGroup, QFileDialog, QMessageBox
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QRadioButton, QButtonGroup, 
+    QFileDialog, QMessageBox
+)
+
+# Import the new self-contained base class
 from base_view import DataView
+# Import the table view to reuse its calculation logic
+from summary_table_view import SummaryTableView
+
 
 class SummaryChartView(DataView):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    """
+    Self-contained summary chart view.
+    Loads its own raw data, filters, and configs from disk.
+    """
+    def __init__(self, incident_path, data_type, parent=None):
+        super().__init__(incident_path, data_type, parent)
         self.summary_data = []
-        self.filter_summary = {}
-        self.active_thresholds = {}
         self._setup_ui()
+        self._render()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Metric selection buttons
         metric_layout = QHBoxLayout()
         self.metric_group = QButtonGroup(self)
+        
         self.rb_mean = QRadioButton("Mean")
         self.rb_max = QRadioButton("Max")
         self.rb_min = QRadioButton("Min")
         self.rb_count = QRadioButton("Count")
         self.rb_mean.setChecked(True)
+        
         self.metric_group.addButton(self.rb_mean, 0)
         self.metric_group.addButton(self.rb_max, 1)
         self.metric_group.addButton(self.rb_min, 2)
         self.metric_group.addButton(self.rb_count, 3)
+        
         metric_layout.addWidget(self.rb_mean)
         metric_layout.addWidget(self.rb_max)
         metric_layout.addWidget(self.rb_min)
@@ -38,11 +54,14 @@ class SummaryChartView(DataView):
         metric_layout.addStretch()
         layout.addLayout(metric_layout)
         
+        # Matplotlib canvas
         self.summary_figure, self.summary_ax = plt.subplots(figsize=(8, 4))
         self.summary_canvas = FigureCanvas(self.summary_figure)
         self.summary_toolbar = NavigationToolbar(self.summary_canvas, self)
+        
         layout.addWidget(self.summary_toolbar)
         layout.addWidget(self.summary_canvas, stretch=1)
+        
         self.metric_group.idClicked.connect(self._redraw)
 
     def export(self):
@@ -57,15 +76,37 @@ class SummaryChartView(DataView):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export summary chart:\n{e}")
 
-    def update_data(self, summary_data, filter_summary, active_thresholds=None):
-        """Receives data from the Table view and redraws the chart."""
-        self.summary_data = summary_data
-        self.filter_summary = filter_summary
-        self.active_thresholds = active_thresholds or {}
+    def render_to_figure(self):
+        """Returns the existing Matplotlib figure directly for PDF export."""
+        return self.summary_figure
+
+    def _render(self):
+        """
+        Calculates summary data using a temporary SummaryTableView.
+        This ensures we use the exact same calculation logic and state as the table view
+        without duplicating code.
+        """
+        temp_table = SummaryTableView(self.incident_path, self.data_type)
+        
+        # Override the temp table's state with our current base class state
+        temp_table.filter_summary = self.filter_summary
+        temp_table.filtered_data = self.filtered_data
+        
+        # Run the calculation
+        temp_table._render()
+        self.summary_data = temp_table.get_summary_data()
+        
+        # Draw the chart
         self._redraw()
 
+    def update_data(self, *args, **kwargs):
+        """Alias for _render to satisfy the DataView interface."""
+        self._render()
+
     def _redraw(self):
+        """Redraws the matplotlib chart based on the current summary_data and metric."""
         self.summary_ax.clear()
+        
         if not self.filter_summary:
             self.summary_canvas.draw()
             return
@@ -101,19 +142,23 @@ class SummaryChartView(DataView):
             
         pivot_df.plot(kind='bar', ax=self.summary_ax, alpha=0.8)
         
-        if metric_name != 'Count' and self.active_thresholds:
-            for analyte, threshold_val in self.active_thresholds.items():
+        # Use base class method to get active thresholds
+        active_thresholds = self.get_active_thresholds()
+        if metric_name != 'Count' and active_thresholds:
+            for analyte, threshold_val in active_thresholds.items():
                 if analyte in pivot_df.columns:
                     self.summary_ax.axhline(y=threshold_val, color='red', linestyle='--', 
                                             linewidth=1.5, alpha=0.8, label=f"{analyte} Threshold")
                                             
+        # Adjust Y-axis to ensure thresholds are visible
         max_val = 0
         if not pivot_df.empty:
             data_max = pivot_df.max().max()
             if pd.notna(data_max) and data_max > max_val:
                 max_val = data_max
-            if metric_name != 'Count' and self.active_thresholds:
-                for analyte, threshold_val in self.active_thresholds.items():
+                
+            if metric_name != 'Count' and active_thresholds:
+                for analyte, threshold_val in active_thresholds.items():
                     if analyte in pivot_df.columns and threshold_val > max_val:
                         max_val = threshold_val
                         
