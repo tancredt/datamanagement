@@ -29,7 +29,6 @@ from device_validations_dialog import DeviceValidationsDialog
 from battery_analysis_dialog import BatteryAnalysisDialog
 from objective_dialog import ObjectiveDialog
 from spectral_results_dialog import SpectralResultsDialog
-from preferences_dialog import PreferencesDialog
 
 # New self-contained data view components
 from table_view import TableView
@@ -44,7 +43,7 @@ from thresholds_dialog import ThresholdsDialog
 
 # Importer workers
 from datamanagement.importer import copy_files_to_realtime, import_area_data
-from datamanagement.updater import update_site_from_device_locations, update_validations
+from datamanagement.updater import update_site_from_device_log, update_validations
 from datamanagement.locations import LocationManager
 
 logger = logging.getLogger(__name__)
@@ -60,14 +59,13 @@ VIEW_CONSTRAINTS = {
     "exposure": {"enabled": [2, 3],          "default": 2},
     "plume":    {"enabled": [4],             "default": 4}
 }
-#This is for the filter summary to work out which set of devices to use
+
 DEVICE_KEY_MAP = {
     "area": "selected_area_devices",
     "spot": "selected_spot_devices",
     "spectral": "selected_spectral_devices",
     "exposure": "selected_exposure_identifiers"
 }
-
 class CopyWorker(QObject):
     finished = Signal(int)
     error = Signal(str)
@@ -102,7 +100,7 @@ class ProcessWorker(QObject):
         try:
             result = import_area_data(self.incident_path)
             if result:
-                update_site_from_device_locations(self.incident_path)
+                update_site_from_device_log(self.incident_path)
                 update_validations(self.incident_path)
             self.finished.emit(result if result else "")
         except Exception as e:
@@ -150,29 +148,24 @@ class DataAnalyzerGUI(QMainWindow):
             self._update_filter_summary_labels()
 
     def _update_app_state(self, has_incident: bool):
-        # All actions that require an active incident
         actions = [
-            self.action_edit_incident, self.action_preferences,
-            self.action_maps, self.action_spot_readings,
+            self.action_edit_incident, self.action_maps, self.action_spot_readings,
             self.action_import_area, self.action_device_locations,
             self.action_device_validations, self.action_battery, self.action_hotzone,
             self.action_warmzone, self.action_fireground, self.action_community,
-            self.action_thresholds, self.action_clear_objectives,
             self.action_publish, self.action_spectral_results,
             self.action_exposures, self.action_import_plumes, self.action_delete_plumes
         ]
         for action in actions:
             action.setEnabled(has_incident)
-            
-        # Disable the dock controls and navigation buttons
+
         controls = [self.data_type_combo, self.btn_filters, self.btn_global_export, self.filter_summary_group]
         for ctrl in controls:
             ctrl.setEnabled(has_incident)
-            
+
         for btn in self.nav_btns.values():
             btn.setEnabled(has_incident)
-            
-        # Show/hide the dock and reset the central stack
+
         if has_incident:
             self.dock.show()
             self.action_toggle_dock.setChecked(True)
@@ -313,11 +306,6 @@ class DataAnalyzerGUI(QMainWindow):
         self.action_exit = file_menu.addAction("&Exit", self.close)
         self.action_exit.setShortcut(QKeySequence("Ctrl+Q"))
 
-        # ── Edit Menu ──
-        edit_menu = menubar.addMenu("&Edit")
-        self.action_preferences = edit_menu.addAction("&Preferences...", self._on_preferences)
-        self.action_preferences.setShortcut(QKeySequence("Ctrl+,"))
-        
         # ── Combined Data Menu ──
         data_menu = menubar.addMenu("&Data")
         self.action_maps = data_menu.addAction("&Maps...", self._on_maps)
@@ -481,6 +469,10 @@ class DataAnalyzerGUI(QMainWindow):
         
         sites_text = ", ".join(sites_list) if sites_list else "None"
 
+    def _update_filter_summary_labels(self):
+        # ... (time, interval, group_by logic remains the same) ...
+
+        # ✅ UPDATED: Read from the data-type-specific key, with fallback
         device_key = DEVICE_KEY_MAP.get(self.data_type, "selected_area_devices")
         devices_list = summary.get(device_key)
         if devices_list is None:
@@ -515,29 +507,20 @@ class DataAnalyzerGUI(QMainWindow):
     # ─────────────────────────────────────────────────────────
     def _clear_current_view(self):
         """Safely removes and destroys the currently active view in the stack."""
-        import matplotlib.pyplot as plt  # ✅ Import pyplot for cleanup
-        
         while self.view_stack.count() > 0:
             w = self.view_stack.widget(0)
             self.view_stack.removeWidget(w)
-            
-            # ✅ FIX: Safely close matplotlib figures to prevent Qt backend crashes
-            if hasattr(w, 'figure'):
-                try: plt.close(w.figure)
-                except Exception: pass
-            if hasattr(w, 'summary_figure'):
-                try: plt.close(w.summary_figure)
-                except Exception: pass
-                
             w.deleteLater()
 
     def _load_view(self, index):
         """Instantiates the requested view and displays it."""
         self._clear_current_view()
+        
         if not self.active_incident_path:
             return
-            
+
         view = None
+
         if index == 0:
             view = TableView(incident_path=self.active_incident_path, data_type=self.data_type, parent=self)
         elif index == 1:
@@ -552,6 +535,7 @@ class DataAnalyzerGUI(QMainWindow):
             maps_data = manager.get_maps_data()
             map_filenames = list(maps_data.keys())
             mapping_dir = os.path.join(self.active_incident_path, "mapping")
+            
             view = SummaryMapView(
                 incident_path=self.active_incident_path,
                 data_type=self.data_type,
@@ -560,13 +544,28 @@ class DataAnalyzerGUI(QMainWindow):
                 maps_data=maps_data,
                 parent=self
             )
-
-        # ✅ FIX: Add the view to the stack and set it as the current widget
-        if view is not None:
-            self.view_stack.addWidget(view)
-            self.view_stack.setCurrentWidget(view)
-
             
+            # Handle plume animation if data type is plume
+            if self.data_type == "plume":
+                plumes_dir = os.path.join(self.active_incident_path, "plumes")
+                plume_data = []
+                if os.path.exists(plumes_dir):
+                    for f in os.listdir(plumes_dir):
+                        if f.lower().endswith(".png"):
+                            try:
+                                dt_str = os.path.splitext(f)[0]
+                                dt_utc = datetime.datetime.strptime(dt_str, "%Y%m%d%H%M")
+                                dt_local = dt_utc.replace(tzinfo=datetime.timezone.utc).astimezone().replace(tzinfo=None)
+                                plume_data.append((dt_local, os.path.join(plumes_dir, f)))
+                            except ValueError:
+                                continue
+                    plume_data.sort(key=lambda x: x[0])
+                view.show_plume_animation(plume_data)
+
+        if view:
+            self.view_stack.addWidget(view)
+            self.view_stack.setCurrentIndex(0)
+
     # ─────────────────────────────────────────────────────────
     # DATA TYPE SWITCHING
     # ─────────────────────────────────────────────────────────
@@ -750,15 +749,6 @@ class DataAnalyzerGUI(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self._update_status_bar(f"✅ Incident '{self.active_label}' updated.")
 
-    @Slot()
-    def _on_preferences(self):
-        if not self.active_incident_path:
-            self._update_status_bar("⚠️ No active incident.")
-            return
-        dialog = PreferencesDialog(self, self.active_incident_path)
-        if dialog.exec() == QDialog.Accepted:
-            self._update_status_bar("✅ Preferences updated.")
-            
     @Slot()
     def _on_maps(self):
         if not self.active_incident_path: 

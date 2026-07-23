@@ -124,10 +124,18 @@ class SummaryChartView(DataView):
             self.summary_canvas.draw()
             return
             
-        metric_id = self.metric_group.checkedId()
-        metric_map = {0: ('Mean', 4), 1: ('Max', 3), 2: ('Min', 2), 3: ('Count', 5)}
-        metric_name, metric_idx = metric_map.get(metric_id, ('Mean', 4))
-        
+        # ✅ Determine metric preference (Report vs Live UI)
+        if hasattr(self, '_report_stats_pref'):
+            # Report mode: use the preference from the objective
+            metric_name = str(self._report_stats_pref).capitalize()
+            metric_map = {'Mean': 4, 'Max': 3, 'Min': 2, 'Count': 5}
+            metric_idx = metric_map.get(metric_name, 4)
+        else:
+            # Live UI mode: use the radio buttons
+            metric_id = self.metric_group.checkedId()
+            metric_map_ui = {0: ('Mean', 4), 1: ('Max', 3), 2: ('Min', 2), 3: ('Count', 5)}
+            metric_name, metric_idx = metric_map_ui.get(metric_id, ('Mean', 4))
+            
         df = pd.DataFrame(self.summary_data, columns=['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count', 'DecPls'])
         df.replace("", pd.NA, inplace=True)
         pivot_df = df.pivot(index='Group', columns='Analyte', values=metric_name)

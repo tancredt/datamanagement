@@ -13,7 +13,7 @@ from gps_analysis_dialog import GPSAnalysisDialog
 from datamanagement.choices import get_available_devices
 from datamanagement.locations import LocationManager
 from map_viewer_dialog import MapViewerDialog
-from datamanagement.updater import update_site_from_device_log
+from datamanagement.updater import update_site_from_device_locations
 
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
@@ -89,15 +89,18 @@ class AddDeviceLocationDialog(QDialog):
         if self.initial_data:
             self.cmb_labels.setCurrentText(self.initial_data.get("location", ""))
             self.cmb_device.setCurrentText(self.initial_data.get("device", ""))
+            
             dt_start = QDateTime.fromString(self.initial_data.get("start", ""), DATE_FORMAT)
             if dt_start.isValid():
                 self.dt_start.setDateTime(dt_start)
+                
             stop_val = self.initial_data.get("stop", "")
             if stop_val:
                 self.chk_has_stop.setChecked(True)
                 dt_stop = QDateTime.fromString(stop_val, DATE_FORMAT)
                 if dt_stop.isValid():
                     self.dt_stop.setDateTime(dt_stop)
+                    
             self.txt_comment.setText(self.initial_data.get("comment", ""))
 
         layout.addLayout(form)
@@ -126,6 +129,7 @@ class AddDeviceLocationDialog(QDialog):
             return
 
         start_dt = QDateTime.fromSecsSinceEpoch(self.dt_start.dateTime().toSecsSinceEpoch())
+        
         if self.chk_has_stop.isChecked():
             stop_dt = QDateTime.fromSecsSinceEpoch(self.dt_stop.dateTime().toSecsSinceEpoch())
             if start_dt >= stop_dt:
@@ -138,12 +142,12 @@ class AddDeviceLocationDialog(QDialog):
         for i, dev in enumerate(self.existing_devices):
             if self.exclude_index is not None and i == self.exclude_index:
                 continue
-
+                
             ex_start_str = dev.get("start", "")
             ex_stop_str = dev.get("stop", "")
             ex_device = dev.get("device", "")
             ex_location = dev.get("location", "")
-
+            
             ex_start = QDateTime.fromSecsSinceEpoch(QDateTime.fromString(ex_start_str, DATE_FORMAT).toSecsSinceEpoch())
             ex_stop = QDateTime.fromSecsSinceEpoch(QDateTime.fromString(ex_stop_str, DATE_FORMAT).toSecsSinceEpoch()) if ex_stop_str else INFINITY_DATE
 
@@ -186,6 +190,7 @@ class DeviceLocationsDialog(QDialog):
 
         self.setWindowTitle("Device Locations Manager")
         self.resize(950, 650)
+        
         self._load_data()
         self._setup_ui()
         self._connect_signals()
@@ -273,17 +278,17 @@ class DeviceLocationsDialog(QDialog):
         self.btn_remove.setEnabled(has_selection)
 
     def _load_data(self):
-        """Loads all device logs and map markers from the unified locations.json."""
+        """Loads all device locations and map markers from the unified locations.json."""
         self.all_devices = []
         self.available_markers = {}
         self.map_markers = {}
-        
         maps_data = self.manager.get_maps_data()
         for fname, markers in maps_data.items():
             self.available_markers[fname] = [m.get("label") for m in markers if m.get("label")]
             self.map_markers[fname] = markers
             for marker in markers:
-                for entry in marker.get("device_log", []):
+                # --- CHANGED: Read from 'device_locations' ---
+                for entry in marker.get("device_locations", []):
                     self.all_devices.append(entry)
 
     def _get_unique_labels(self):
@@ -306,7 +311,7 @@ class DeviceLocationsDialog(QDialog):
         for i, dev_data in enumerate(self.all_devices):
             if filter_val == "All" or dev_data.get("location") == filter_val:
                 rows_data.append((i, dev_data))
-
+                
         self.table.setRowCount(len(rows_data))
         for i, (orig_idx, dev_data) in enumerate(rows_data):
             item = QTableWidgetItem(dev_data.get("location", ""))
@@ -316,7 +321,7 @@ class DeviceLocationsDialog(QDialog):
             self.table.setItem(i, 2, QTableWidgetItem(dev_data.get("start", "")))
             self.table.setItem(i, 3, QTableWidgetItem(dev_data.get("stop", "") or "-"))
             self.table.setItem(i, 4, QTableWidgetItem(dev_data.get("comment", "") or "-"))
-
+            
         self.table.resizeRowsToContents()
         self._update_button_states()
 
@@ -383,24 +388,23 @@ class DeviceLocationsDialog(QDialog):
         dialog.exec()
 
     def _save_data(self):
-        """Rebuilds the device_log arrays for all markers and saves to unified locations.json."""
+        """Rebuilds the device_locations arrays for all markers and saves to unified locations.json."""
         try:
             maps_data = self.manager.get_maps_data()
             
-            # Clear existing device logs
+            # --- CHANGED: Clear and rebuild 'device_locations' ---
             for markers in maps_data.values():
                 for marker in markers:
-                    marker["device_log"] = []
+                    marker["device_locations"] = []
                     
-            # Rebuild device logs
             for entry in self.all_devices:
                 target_location = entry.get("location")
                 for markers in maps_data.values():
                     for marker in markers:
                         if marker.get("label") == target_location:
-                            if "device_log" not in marker:
-                                marker["device_log"] = []
-                            marker["device_log"].append(entry)
+                            if "device_locations" not in marker:
+                                marker["device_locations"] = []
+                            marker["device_locations"].append(entry)
                             break
                     else:
                         continue
@@ -441,7 +445,6 @@ class DeviceLocationsDialog(QDialog):
         super().reject()
 
 
-
 class ProcessingWorker(QThread):
     finished_signal = Signal()
     error_signal = Signal(str)
@@ -453,7 +456,7 @@ class ProcessingWorker(QThread):
     def run(self):
         try:
             logger.info("Updating SITE column with new device locations...")
-            update_site_from_device_log(self.incident_path)
+            update_site_from_device_locations(self.incident_path)
             self.finished_signal.emit()
         except Exception as e:
             self.error_signal.emit(str(e))

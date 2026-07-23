@@ -169,27 +169,28 @@ class TableView(DataView):
         self._render()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.table_view = QTableView()
-        self.table_view.setAlternatingRowColors(True)
-        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table_view.verticalHeader().setVisible(False)
-        layout.addWidget(self.table_view, stretch=1)
-        
-        # Bottom Controls
-        bottom_layout = QHBoxLayout()
-        self.btn_prev_page = QPushButton("Previous")
-        self.lbl_page_info = QLabel("Page 0 of 0")
-        self.btn_next_page = QPushButton("Next")
-        
-        bottom_layout.addStretch()
-        bottom_layout.addWidget(self.btn_prev_page)
-        bottom_layout.addWidget(self.lbl_page_info)
-        bottom_layout.addWidget(self.btn_next_page)
-        bottom_layout.addStretch()
-        layout.addLayout(bottom_layout)
+         layout = QVBoxLayout(self)
+         layout.setContentsMargins(0, 0, 0, 0)
+         self.table_view = QTableView()
+         self.table_view.setAlternatingRowColors(True)
+         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+         self.table_view.verticalHeader().setVisible(False)
+         layout.addWidget(self.table_view, stretch=1)
+         
+         # Bottom Controls
+         bottom_layout = QHBoxLayout()
+         self.btn_prev_page = QPushButton("Previous")
+         self.lbl_page_info = QLabel("Page 0 of 0")
+         self.btn_next_page = QPushButton("Next")
+         bottom_layout.addStretch()
+         bottom_layout.addWidget(self.btn_prev_page)
+         bottom_layout.addWidget(self.lbl_page_info)
+         bottom_layout.addWidget(self.btn_next_page)
+         bottom_layout.addStretch()
+         layout.addLayout(bottom_layout)
+
+         self.btn_prev_page.clicked.connect(self._on_prev_page)
+         self.btn_next_page.clicked.connect(self._on_next_page)
 
     def export(self):
         """Satisfies the DataView interface. Exports the full underlying dataframe to a CSV file."""
@@ -211,17 +212,65 @@ class TableView(DataView):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export table:\n{e}")
 
+    def _reorder_columns(self, df):
+        """Reorders columns to: LOG TIME, SITE, DEVICE, analytes, [aggregated stats], observations, Latitude, Longitude, others."""
+        if df is None or df.empty:
+            return df
+        
+        ordered = []
+        
+        # 1. Core metadata columns first
+        for col in ['LOG TIME', 'SITE', 'DEVICE']:
+            if col in df.columns:
+                ordered.append(col)
+        
+        # 2. Base analyte columns (from self.analyte_dec_pls)
+        for analyte in self.analyte_dec_pls.keys():
+            if analyte in df.columns and analyte not in ordered:
+                ordered.append(analyte)
+        
+        # 3. Aggregated stat columns (_min, _max, _count) - placed before Latitude/Longitude
+        for analyte in self.analyte_dec_pls.keys():
+            for suffix in ['_min', '_max', '_count']:
+                col = f"{analyte}{suffix}"
+                if col in df.columns and col not in ordered:
+                    ordered.append(col)
+        
+        # 4. Observations
+        if 'observations' in df.columns:
+            ordered.append('observations')
+        
+        # 5. Coordinates
+        for col in ['Latitude', 'Longitude']:
+            if col in df.columns:
+                ordered.append(col)
+        
+        # 6. INVALID_ columns
+        for col in df.columns:
+            if col.upper().startswith('INVALID_') and col not in ordered:
+                ordered.append(col)
+        
+        # 7. Any remaining columns (catches anything we missed)
+        for col in df.columns:
+            if col not in ordered:
+                ordered.append(col)
+        
+        return df[ordered]
+
     def _render(self):
         """Render the table with current filtered_data."""
         if self.model is None:
             self.model = PaginatedTableModel(dec_pls_dict=self.analyte_dec_pls, page_size=100)
             self.table_view.setModel(self.model)
         
+        # Reorder columns before passing to model
+        reordered_data = self._reorder_columns(self.filtered_data)
+        
         # Use base class state
         show_invalid_bg = not self.filter_summary.get("only_valid", False)
         self.model.set_show_invalid_bg(show_invalid_bg)
         self.model.set_active_thresholds(self.get_active_thresholds())
-        self.model.set_data(self.filtered_data)
+        self.model.set_data(reordered_data)
         self._update_table()
 
     def update_data(self, *args, **kwargs):
@@ -264,3 +313,13 @@ class TableView(DataView):
                 self.table_view.setColumnWidth(i, 100)
                 
         header.setStretchLastSection(True)
+
+    def _on_next_page(self):
+        """Handles the Next button click."""
+        if self.model and self.model.next_page():
+            self._update_table()
+
+    def _on_prev_page(self):
+        """Handles the Previous button click."""
+        if self.model and self.model.prev_page():
+            self._update_table()

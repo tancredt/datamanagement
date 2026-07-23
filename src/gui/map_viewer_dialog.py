@@ -2,6 +2,7 @@ import os
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QComboBox, QWidget
 from PySide6.QtGui import QPixmap, QPainter, QPen, QFont, QColor
 from PySide6.QtCore import Qt
+from map_renderer import draw_markers
 
 class MapPreviewWidget(QWidget):
     def __init__(self, parent=None):
@@ -37,16 +38,11 @@ class MapPreviewWidget(QWidget):
         
         font = QFont("Arial", 12, QFont.Bold)
         painter.setFont(font)
-        for m in self.markers:
-            x, y, label = m.get("x"), m.get("y"), m.get("label")
-            if x is None or y is None or not label:
-                continue
-            pen_width = max(1.0, 2.5 / scale)
-            painter.setPen(QPen(QColor("red"), pen_width))
-            painter.setBrush(QColor("yellow"))
-            painter.drawEllipse(x - 9, y - 9, 18, 18)
-            painter.setPen(QPen(QColor("black"), max(1.0, 1.2 / scale)))
-            painter.drawText(x + 12, y + 5, label)
+        draw_markers(painter, self.markers, options={
+            "scale_factor": scale, 
+            "font_size": 12, 
+            "circle_radius": 9
+        })
         painter.restore()
 
 class MapViewerDialog(QDialog):

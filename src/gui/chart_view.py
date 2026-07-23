@@ -48,7 +48,7 @@ class ChartView(DataView):
     def _render(self):
         """Render the chart with current filtered_data."""
         self.ax.clear()
-        print(self.filtered_data)
+        
         if self.filtered_data is None or self.filtered_data.empty:
             self.ax.text(0.5, 0.5, "No data matches the current filters.",
                          horizontalalignment='center', verticalalignment='center',
@@ -68,7 +68,7 @@ class ChartView(DataView):
 
         # ── Use base class state ──
         selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
-        valid_analytes = [g for g in selected_analytes if g in df.columns]
+        valid_analytes = [str(g).strip() for g in selected_analytes if str(g).strip() in df.columns]
         if not valid_analytes:
             self.canvas.draw()
             return
@@ -122,18 +122,35 @@ class ChartView(DataView):
                     self.ax.axhline(y=threshold_val, color='red', linestyle='--',
                                     linewidth=1.2, alpha=0.7, label=line_label)
 
+        # ── Construct specific, dynamic title ──
+        analytes_str = ", ".join(valid_analytes)
+        interval = str(self.filter_summary.get("interval", "Raw")).strip()
+        interval_str = "Raw Data" if interval.lower() == "raw" else f"{interval} min Averages"
+        
+        start_time = self.filter_summary.get("start_time")
+        stop_time = self.filter_summary.get("stop_time")
+        
+        def format_time(dt):
+            if isinstance(dt, pd.Timestamp):
+                return dt.strftime("%H:%M %d/%m/%Y")
+            elif hasattr(dt, "strftime"):
+                return dt.strftime("%H:%M %d/%m/%Y")
+            return str(dt)
+            
+        start_str = format_time(start_time)
+        stop_str = format_time(stop_time)
+        
+        self.ax.set_title(f"{analytes_str} as {interval_str} between {start_str} - {stop_str}")
+        
         date_fmt = mdates.DateFormatter('%d %H:%M')
         self.ax.xaxis.set_major_formatter(date_fmt)
         self.ax.set_xlabel('Time')
         self.ax.set_ylabel('Concentration')
-        self.ax.set_title('Filtered Analyte Readings Over Time')
         self.figure.autofmt_xdate()
 
-        start_str = self.filter_summary.get("start_time", "")
-        stop_str = self.filter_summary.get("stop_time", "")
-        if start_str and start_str != "All":
-            start_dt = pd.to_datetime(start_str)
-            stop_dt = pd.to_datetime(stop_str)
+        if start_time and stop_time:
+            start_dt = pd.to_datetime(start_time)
+            stop_dt = pd.to_datetime(stop_time)
             self.ax.set_xlim(start_dt, stop_dt)
 
         # ── Adjust Y-Axis Limit ──

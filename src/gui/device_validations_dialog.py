@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QDateTime, QThread, Signal
 from datamanagement.choices import get_available_devices
+from datamanagement.updater import update_validations
 
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
@@ -218,7 +219,6 @@ class ProcessingWorker(QThread):
         self.incident_path = incident_path
     def run(self):
         try:
-            from datamanagement.importer import update_validations
             update_validations(self.incident_path)
             self.finished_signal.emit()
         except Exception as e:
@@ -228,7 +228,7 @@ class DeviceValidationsDialog(QDialog):
     def __init__(self, parent=None, incident_path=None):
         super().__init__(parent)
         self.incident_path = incident_path
-        self.validations_dir = os.path.join(incident_path, "mapping")
+        self.validations_dir = os.path.join(incident_path, "validations")
         self.device_validations_json = os.path.join(self.validations_dir, "device_validations.json")
         self.all_validations = []
         self.worker = None

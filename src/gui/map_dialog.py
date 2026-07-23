@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap, QPainter, QPen, QFont, QColor, QDoubleValidator, QDesktopServices
 from PySide6.QtCore import Qt, Signal, QUrl
 from datamanagement.locations import LocationManager, get_next_label_index, index_to_label
+from map_renderer import draw_markers
 
 logger = logging.getLogger(__name__)
 
@@ -162,18 +163,22 @@ class MarkerInfoDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
-    def get_data(self, existing_data=None): # Removed 'mode'
+    def get_data(self, existing_data=None):
         data = {
            "label": self.lbl_label.text().strip(),
            "description": self.txt_desc.toPlainText().strip(),
-           "coordinates": {"latitude": self._lat, "longitude": self._lon}
-       }
+           "coordinates": {"latitude": self._lat, "longitude": self._lon},
+           "readings": {"spot": [], "spectral": []},
+           "device_locations": []
+        }
         if existing_data:
-           data["readings"] = existing_data.get("readings", [])
-           data["device_log"] = existing_data.get("device_log", [])
-        else:
-           data["readings"] = []      # Initialize both for new markers
-           data["device_log"] = []
+            # Preserve device_locations
+            data["device_locations"] = existing_data.get("device_locations", [])
+            
+            # Preserve or migrate readings
+            existing_readings = existing_data.get("readings", {})
+            if isinstance(existing_readings, dict):
+                data["readings"] = existing_readings
         return data
 
 class MapCanvas(QWidget):
@@ -202,19 +207,12 @@ class MapCanvas(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
         if self.pixmap and not self.pixmap.isNull():
             painter.drawPixmap(0, 0, self.pixmap)
-        
-        font = QFont("Arial", 10, QFont.Bold)
-        painter.setFont(font)
-        for m in self.markers:
-            x, y, label = m["x"], m["y"], m["label"]
-            painter.setPen(QPen(QColor("red"), 2))
-            painter.setBrush(QColor("yellow"))
-            painter.drawEllipse(x-8, y-8, 16, 16)
-            painter.setPen(QPen(QColor("black"), 1))
-            painter.drawText(x+10, y+4, label)
+            
+        draw_markers(painter, self.markers)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape and self._pending_data:
@@ -407,7 +405,6 @@ class MapEditorDialog(QDialog):
     def _on_edit_marker(self, idx):
         all_used_labels = self.manager.get_all_used_labels()
         marker = self.canvas.markers[idx]
-        
         dialog = MarkerInfoDialog(self, edit_data=marker, current_map_labels=all_used_labels)
         if dialog.exec() == QDialog.Accepted:
             new_data = dialog.get_data(existing_data=marker)
@@ -420,15 +417,9 @@ class MapEditorDialog(QDialog):
                         m["label"] = new_label
                         m["description"] = new_data["description"]
                         m["coordinates"] = new_data["coordinates"]
+                        m["readings"] = new_data["readings"]
+                        m["device_locations"] = new_data["device_locations"] # ✅ Ensure this is saved
                         
-                        if "device_log" in new_data:
-                            for log_entry in new_data["device_log"]:
-                                log_entry["location"] = new_label
-                            m["device_log"] = new_data["device_log"]
-                            
-                        if "readings" in new_data:
-                            m["readings"] = new_data["readings"]
-                            
             self.canvas.markers = list(self.maps_data.get(self.current_map_file, []))
             self.canvas.update()
             self._save_data()

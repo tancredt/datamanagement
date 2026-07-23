@@ -54,10 +54,12 @@ class SummaryMapCanvas(QWidget):
             label = m['label']
             text = m['text']
             
+            # Draw marker circle
             painter.setPen(QPen(QColor("red"), 2))
             painter.setBrush(QColor("yellow"))
             painter.drawEllipse(x-8, y-8, 16, 16)
             
+            # Draw text next to the marker
             painter.setPen(QPen(QColor("black"), 1))
             painter.setBrush(Qt.NoBrush)
             display_text = f"{label}: {text}" if text else f"{label}: N/A"
@@ -96,6 +98,8 @@ class SummaryMapView(DataView):
         normal_layout.setContentsMargins(0, 0, 0, 0)
 
         map_top_layout = QHBoxLayout()
+        
+        # Map Selector
         map_top_layout.addWidget(QLabel("<b>Map:</b>"))
         self.summary_map_combo = QComboBox()
         self.summary_map_combo.addItems(self.map_filenames)
@@ -103,14 +107,23 @@ class SummaryMapView(DataView):
         self.summary_map_combo.currentTextChanged.connect(self._redraw)
         map_top_layout.addWidget(self.summary_map_combo)
 
+        # ✅ Analyte Selector (Populated from last_filters.json)
         map_top_layout.addWidget(QLabel("<b>Analyte:</b>"))
         self.summary_map_analyte_combo = QComboBox()
-        self.summary_map_analyte_combo.addItems(self.available_analytes)
+        selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
+        if not selected_analytes:
+            selected_analytes = self.available_analytes
+        # Ensure it's a list (safety net)
+        if isinstance(selected_analytes, str):
+            selected_analytes = [selected_analytes]
+        self.summary_map_analyte_combo.addItems(selected_analytes)
         self.summary_map_analyte_combo.setMinimumWidth(120)
         self.summary_map_analyte_combo.currentTextChanged.connect(self._redraw)
         map_top_layout.addWidget(self.summary_map_analyte_combo)
+        
         map_top_layout.addStretch()
 
+        # Statistic Radio Buttons
         self.summary_map_metric_group = QButtonGroup(self)
         self.rb_map_mean = QRadioButton("Mean")
         self.rb_map_max = QRadioButton("Max")
@@ -131,6 +144,7 @@ class SummaryMapView(DataView):
         normal_layout.addLayout(map_top_layout)
         self.summary_map_metric_group.idClicked.connect(self._redraw)
 
+        # Canvas & Scroll Area
         self.summary_map_canvas = SummaryMapCanvas()
         map_scroll = QScrollArea()
         map_scroll.setWidgetResizable(False)
@@ -244,8 +258,24 @@ class SummaryMapView(DataView):
     def _render(self):
         """Render the view with current filtered_data."""
         if self.data_type == "plume":
-            # Plume data is handled separately via show_plume_animation()
             return
+        
+        # ✅ Sync analyte combobox with current filter_summary (in case filters changed)
+        current_analyte = self.summary_map_analyte_combo.currentText()
+        selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
+        if not selected_analytes:
+            selected_analytes = self.available_analytes
+        if isinstance(selected_analytes, str):
+            selected_analytes = [selected_analytes]
+            
+        current_items = [self.summary_map_analyte_combo.itemText(i) for i in range(self.summary_map_analyte_combo.count())]
+        if list(selected_analytes) != current_items:
+            self.summary_map_analyte_combo.blockSignals(True)
+            self.summary_map_analyte_combo.clear()
+            self.summary_map_analyte_combo.addItems(selected_analytes)
+            if current_analyte in selected_analytes:
+                self.summary_map_analyte_combo.setCurrentText(current_analyte)
+            self.summary_map_analyte_combo.blockSignals(False)
         
         self.show_normal_map()
         self._redraw()
@@ -285,8 +315,6 @@ class SummaryMapView(DataView):
             return
 
         dt, filepath = self.plume_data[self.current_plume_index]
-        
-        # dt is already in local time (naive), so we can format it directly
         local_time_str = dt.strftime('%Y-%m-%d %H:%M')
         self.plume_title_label.setText(f"Air Dispersion Prediction for {local_time_str}")
 
@@ -336,10 +364,21 @@ class SummaryMapView(DataView):
     def _redraw(self):
         """Redraws the map overlay based on current filtered_data."""
         selected_map = self.summary_map_combo.currentText()
-        selected_analyte = self.summary_map_analyte_combo.currentText()
-        metric_id = self.summary_map_metric_group.checkedId()
-        metric_map = {0: 'Mean', 1: 'Max', 2: 'Min', 3: 'Count'}
-        metric_name = metric_map.get(metric_id, 'Mean')
+        
+        # Determine analyte and metric (Report vs Live UI)
+        if hasattr(self, '_report_stats_pref'):
+            selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
+            selected_analyte = selected_analytes[0] if selected_analytes else None
+            metric_name = str(self._report_stats_pref).capitalize()
+        else:
+            selected_analyte = self.summary_map_analyte_combo.currentText()
+            metric_id = self.summary_map_metric_group.checkedId()
+            metric_map = {0: 'Mean', 1: 'Max', 2: 'Min', 3: 'Count'}
+            metric_name = metric_map.get(metric_id, 'Mean')
+
+        if not selected_analyte:
+            self.summary_map_canvas.set_markers([])
+            return
 
         if selected_map and selected_map in self.maps_data:
             pixmap_path = os.path.join(self.mapping_dir, selected_map)
@@ -355,28 +394,34 @@ class SummaryMapView(DataView):
         markers_data = []
         markers = self.maps_data.get(selected_map, [])
 
-        # Use base class state (self.filtered_data from DataView)
         if (self.filtered_data is not None and 
             not self.filtered_data.empty and 
             'SITE' in self.filtered_data.columns and 
             selected_analyte in self.filtered_data.columns):
             
+            # ✅ FIX: Reverted to robust aggregation that works for BOTH raw and aggregated data
             site_aggs = self.filtered_data.groupby('SITE')[selected_analyte].agg(['min', 'max', 'mean', 'count']).reset_index()
             site_aggs.columns = ['SITE', 'Min', 'Max', 'Mean', 'Count']
             
             for m in markers:
-                label = m.get('label', '')
+                label = str(m.get('label', '')).strip()
                 x = m.get('x', 0)
                 y = m.get('y', 0)
                 
-                site_row = site_aggs[site_aggs['SITE'] == label]
+                # ✅ FIX: Strip whitespace from SITE column to ensure perfect matching with marker labels
+                site_row = site_aggs[site_aggs['SITE'].astype(str).str.strip() == label]
                 if not site_row.empty:
                     val = site_row.iloc[0][metric_name]
-                    dec_pls = self.analyte_dec_pls.get(selected_analyte, 2)
-                    if metric_name == 'Count':
-                        text = f"{int(val)}"
+                    
+                    # Check for NaN before formatting to prevent "nan" strings
+                    if pd.isna(val):
+                        text = "N/A"
                     else:
-                        text = f"{val:.{dec_pls}f}"
+                        dec_pls = self.analyte_dec_pls.get(selected_analyte, 2)
+                        if metric_name == 'Count':
+                            text = f"{int(val)}"
+                        else:
+                            text = f"{val:.{dec_pls}f}"
                 else:
                     text = "N/A"
                 
@@ -386,7 +431,7 @@ class SummaryMapView(DataView):
                 markers_data.append({
                     'x': m.get('x', 0), 
                     'y': m.get('y', 0), 
-                    'label': m.get('label', ''), 
+                    'label': str(m.get('label', '')).strip(), 
                     'text': 'N/A'
                 })
 

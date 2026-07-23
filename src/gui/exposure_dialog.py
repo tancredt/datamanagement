@@ -15,8 +15,8 @@ DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
 
 class AddExposureDialog(QDialog):
     """Dialog to input details for a personnel exposure event."""
-    def __init__(self, parent=None, available_analytes=None, initial_data=None, 
-                 existing_exposures=None, exclude_index=None, 
+    def __init__(self, parent=None, available_analytes=None, initial_data=None,
+                 existing_exposures=None, exclude_index=None,
                  available_ids=None, available_devices=None, available_areas=None):
         super().__init__(parent)
         self.available_analytes = available_analytes or []
@@ -35,7 +35,7 @@ class AddExposureDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
-        
+
         form = QFormLayout()
         form.setSpacing(8)
         form.setLabelAlignment(Qt.AlignRight)
@@ -122,6 +122,7 @@ class AddExposureDialog(QDialog):
         self.analyte_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.analyte_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.analyte_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+
         self.analyte_table.setRowCount(len(self.available_analytes))
         self.analyte_table.verticalHeader().setVisible(False)
 
@@ -147,22 +148,22 @@ class AddExposureDialog(QDialog):
         if self.initial_data:
             self.cmb_id.setCurrentText(self.initial_data.get("id", ""))
             self.cmb_device.setCurrentText(self.initial_data.get("device", ""))
-            
+
             dt_start = QDateTime.fromString(self.initial_data.get("start", ""), DATE_FORMAT)
             if dt_start.isValid(): self.dt_start.setDateTime(dt_start)
-            
+
             dt_stop = QDateTime.fromString(self.initial_data.get("stop", ""), DATE_FORMAT)
             if dt_stop.isValid(): self.dt_stop.setDateTime(dt_stop)
-            
+
             self.cmb_area.setCurrentText(self.initial_data.get("area", ""))
             self.le_activities.setText(self.initial_data.get("activities", ""))
-            
+
             idx = self.cmb_resp_protection.findText(self.initial_data.get("resp_protection", "None"))
             if idx >= 0: self.cmb_resp_protection.setCurrentIndex(idx)
-            
+
             idx = self.cmb_clothing.findText(self.initial_data.get("clothing", "Structural"))
             if idx >= 0: self.cmb_clothing.setCurrentIndex(idx)
-            
+
             idx = self.cmb_footwear.findText(self.initial_data.get("footwear", "Structural boots"))
             if idx >= 0: self.cmb_footwear.setCurrentIndex(idx)
 
@@ -175,6 +176,7 @@ class AddExposureDialog(QDialog):
                         self.analyte_inputs[analyte][key].setText(str(val))
 
         layout.addSpacing(10)
+
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.setMinimumHeight(34)
         layout.addWidget(btn_box)
@@ -196,7 +198,6 @@ class AddExposureDialog(QDialog):
             return
 
         # Duplicate ID check has been REMOVED to allow duplicate IDs.
-
         self.accept()
 
     def get_data(self):
@@ -229,10 +230,10 @@ class AddExposureDialog(QDialog):
                 if min_str:
                     try: analyte_data["min"] = float(min_str)
                     except ValueError: pass
-                
+
                 if analyte_data:
                     values[analyte] = analyte_data
-                    
+
         data["values"] = values
         return data
 
@@ -243,14 +244,19 @@ class ExposuresDialog(QDialog):
         self.incident_path = incident_path
         self.exposures_dir = os.path.join(incident_path, "data", "exposures")
         self.exposures_file = os.path.join(self.exposures_dir, "exposures.json")
-        self.available_analytes = available_analytes or []
-        self.analyte_dec_pls = analyte_dec_pls or {}
+        
+        # ✅ FIX: Load analytes from config if not provided
+        if available_analytes is None or analyte_dec_pls is None:
+            self._load_analytes_from_config()
+        else:
+            self.available_analytes = available_analytes
+            self.analyte_dec_pls = analyte_dec_pls
 
         self.all_exposures = []
         self.available_ids = []
         self.available_devices = []
         self.available_areas = []
-        
+
         self._load_data()
 
         self.setWindowTitle("Exposure Records Manager")
@@ -259,13 +265,47 @@ class ExposuresDialog(QDialog):
         self._connect_signals()
         self._update_table()
 
+    def _load_analytes_from_config(self):
+        """Load available analytes and decimal places from static/lists/analytes.json."""
+        self.available_analytes = []
+        self.analyte_dec_pls = {}
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        analyte_config_path = os.path.normpath(
+            os.path.join(parent_dir, 'static', 'lists', 'analytes.json')
+        )
+
+        if not os.path.exists(analyte_config_path):
+            logger.warning(f"Analytes config not found: {analyte_config_path}")
+            return
+
+        try:
+            with open(analyte_config_path, 'r', encoding='utf-8') as f:
+                analyte_config = json.load(f)
+
+            for analyte in analyte_config.get("analytes", []):
+                clean = {k.strip(): str(v).strip() for k, v in analyte.items()}
+                name = clean.get("name")
+                if name:
+                    self.available_analytes.append(name)
+                    try:
+                        dec_pls = int(clean.get("dec_pls", 2))
+                    except (ValueError, TypeError):
+                        dec_pls = 2
+                    self.analyte_dec_pls[name] = dec_pls
+
+            logger.info(f"Loaded {len(self.available_analytes)} analytes from config")
+        except Exception as e:
+            logger.error(f"Failed to load analytes config: {e}")
+
     def _load_data(self):
         if os.path.exists(self.exposures_file):
             try:
                 with open(self.exposures_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    
-                # Helper to strip whitespace from keys and string values (fixes JSON formatting quirks)
+
+                # Helper to strip whitespace from keys and string values
                 def clean(obj):
                     if isinstance(obj, dict):
                         return {k.strip(): clean(v) for k, v in obj.items()}
@@ -284,13 +324,14 @@ class ExposuresDialog(QDialog):
         ids = set()
         devices = set()
         areas = set()
+
         for exp in self.all_exposures:
             exp_id = exp.get("id", "")
             if exp_id: ids.add(exp_id)
-            
+
             dev = exp.get("device", "")
             if dev: devices.add(dev)
-            
+
             area = exp.get("area", "")
             if area: areas.add(area)
 
@@ -306,6 +347,7 @@ class ExposuresDialog(QDialog):
         self.table = QTableWidget()
         headers = ["Id", "Device", "Start", "Stop", "Area", "Activities Performed", 
                    "Resp. Protection", "Clothing", "Footwear"] + self.available_analytes
+
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
 
@@ -318,15 +360,18 @@ class ExposuresDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
+
         for i in range(9, len(headers)):
             self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
         self.table.setAlternatingRowColors(True)
         self.table.setWordWrap(True)
         self.table.setStyleSheet("QTableWidget { font-size: 12px; }")
+
         layout.addWidget(self.table)
 
         btn_row = QHBoxLayout()
+
         self.btn_add = QPushButton("Add Exposure...")
         self.btn_add.setMinimumHeight(32)
         self.btn_add.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
@@ -382,6 +427,7 @@ class ExposuresDialog(QDialog):
 
         headers = ["Id", "Device", "Start", "Stop", "Area", "Activities Performed", 
                    "Resp. Protection", "Clothing", "Footwear"] + active_analytes
+
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
 
@@ -394,10 +440,12 @@ class ExposuresDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
+
         for i in range(9, len(headers)):
             self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
         self.table.setRowCount(len(self.all_exposures))
+
         for i, exp_data in enumerate(self.all_exposures):
             self.table.setItem(i, 0, QTableWidgetItem(exp_data.get("id", "")))
             self.table.setItem(i, 1, QTableWidgetItem(exp_data.get("device", "")))
@@ -413,6 +461,7 @@ class ExposuresDialog(QDialog):
             for j, analyte in enumerate(active_analytes):
                 dec_pls = self.analyte_dec_pls.get(analyte, 2)
                 stats = values.get(analyte, {})
+
                 min_val = stats.get("min")
                 max_val = stats.get("max")
                 mean_val = stats.get("mean")
@@ -421,7 +470,7 @@ class ExposuresDialog(QDialog):
                 if mean_val is not None and mean_val != "": parts.append(f"Mean: {float(mean_val):.{dec_pls}f}")
                 if min_val is not None and min_val != "": parts.append(f"Min: {float(min_val):.{dec_pls}f}")
                 if max_val is not None and max_val != "": parts.append(f"Max: {float(max_val):.{dec_pls}f}")
-                
+
                 text = "\n".join(parts) if parts else ""
                 self.table.setItem(i, 9 + j, QTableWidgetItem(text))
 

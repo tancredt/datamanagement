@@ -32,51 +32,46 @@ def index_to_label(idx):
         result.append(chr(65 + rem))
     return ''.join(reversed(result))
 
-
-# ==========================================
-# 2. LOCATION MANAGER CLASS
-# ==========================================
 class LocationManager:
     """
-    Common interface for managing spot, area, and spectral location JSON files.
-    Handles loading, saving, structure validation, and data extraction.
+    Unified manager for all map markers and their associated data.
+    Reads and writes to a single 'locations.json' file in the mapping directory.
     """
-    def __init__(self, incident_path, mode="spot"):
+    def __init__(self, incident_path):
         self.incident_path = incident_path
-        self.mode = mode  # "spot", "area", "spectral"
         self.mapping_dir = os.path.join(incident_path, "mapping")
-        self.json_file = os.path.join(self.mapping_dir, f"{mode}_locations.json")
+        self.locations_file = os.path.join(self.mapping_dir, "locations.json")
         self.data = {"maps": {"locations": []}}
+        self.ensure_structure()
         self.load()
 
+    def ensure_structure(self):
+        os.makedirs(self.mapping_dir, exist_ok=True)
+        if not os.path.exists(self.locations_file):
+            self._save_data({"maps": {"locations": []}})
+
     def load(self):
-        """Loads the JSON file into memory."""
-        if os.path.exists(self.json_file):
+        if os.path.exists(self.locations_file):
             try:
-                with open(self.json_file, 'r', encoding='utf-8') as f:
+                with open(self.locations_file, 'r', encoding='utf-8') as f:
                     self.data = json.load(f)
             except Exception as e:
-                logger.error(f"Failed to load {self.json_file}: {e}")
+                logger.error(f"Failed to load {self.locations_file}: {e}")
                 self.data = {"maps": {"locations": []}}
         else:
             self.data = {"maps": {"locations": []}}
 
     def save(self):
-        """Saves the in-memory data structure back to the JSON file."""
         os.makedirs(self.mapping_dir, exist_ok=True)
         try:
-            with open(self.json_file, 'w', encoding='utf-8') as f:
+            with open(self.locations_file, 'w', encoding='utf-8') as f:
                 json.dump(self.data, f, indent=2)
         except Exception as e:
-            logger.error(f"Failed to save {self.json_file}: {e}")
+            logger.error(f"Failed to save {self.locations_file}: {e}")
 
-    def ensure_structure(self):
-        """Ensures that all markers have the required keys (readings or device_log)."""
-        required_key = "device_log" if self.mode == "area" else "readings"
-        for loc in self.data.get("maps", {}).get("locations", []):
-            for marker in loc.get("markers", []):
-                if required_key not in marker:
-                    marker[required_key] = []
+    def _save_data(self, data):
+        self.data = data
+        self.save()
 
     def get_maps_data(self):
         """Returns a dict of {filename: [markers]}"""
@@ -91,10 +86,7 @@ class LocationManager:
         """Sets the maps data from a dict of {filename: [markers]} and saves to disk."""
         locations_list = []
         for fname, markers in maps_data.items():
-            locations_list.append({
-                "filename": fname,
-                "markers": markers
-            })
+            locations_list.append({"filename": fname, "markers": markers})
         self.data = {"maps": {"locations": locations_list}}
         self.save()
 
@@ -104,94 +96,133 @@ class LocationManager:
         dest_path = os.path.join(self.mapping_dir, fname)
         if not os.path.exists(dest_path):
             shutil.copy2(image_path, dest_path)
-        
+            
         locations_list = self.data.get("maps", {}).get("locations", [])
         if not any(loc.get("filename") == fname for loc in locations_list):
-            locations_list.append({
-                "filename": fname,
-                "markers": []
-            })
+            locations_list.append({"filename": fname, "markers": []})
             self.data["maps"]["locations"] = locations_list
             self.save()
         return fname
 
     def get_all_used_labels(self):
-        """Gathers all used labels globally across all maps and all data types."""
+        """Gathers all used labels globally across all maps."""
         used_labels = set()
-        for mode in ["spot", "area", "spectral"]:
-            json_file = os.path.join(self.mapping_dir, f"{mode}_locations.json")
-            if os.path.exists(json_file):
-                try:
-                    with open(json_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    for loc in data.get("maps", {}).get("locations", []):
-                        for m in loc.get("markers", []):
-                            lbl = m.get("label")
-                            if lbl: used_labels.add(lbl)
-                except Exception as e:
-                    logger.error(f"Failed to load global labels from {json_file}: {e}")
+        for loc in self.data.get("maps", {}).get("locations", []):
+            for m in loc.get("markers", []):
+                lbl = m.get("label")
+                if lbl: used_labels.add(lbl)
         return used_labels
 
+    # ==========================================
+    # 2. STRUCTURE HELPERS
+    # ==========================================
+    def _ensure_marker_structure(self, marker):
+        """Ensures the marker has the correct explicit structure for readings and device_locations."""
+        # Ensure 'readings' is a dict with explicit 'spot' and 'spectral' lists
+        if "readings" not in marker or not isinstance(marker.get("readings"), dict):
+            marker["readings"] = {"spot": [], "spectral": []}
+        else:
+            marker["readings"].setdefault("spot", [])
+            marker["readings"].setdefault("spectral", [])
+            
+        # Ensure 'device_locations' exists for area data
+        if "device_locations" not in marker or not isinstance(marker.get("device_locations"), list):
+            marker["device_locations"] = []
+
+    # ==========================================
+    # 3. DEVICE & READING ACCESSORS
+    # ==========================================
     def get_available_devices(self):
-        """Loads unique device labels from the readings."""
+        """Loads unique device labels from spot, spectral, and device_locations."""
         devices = set()
         for loc in self.data.get("maps", {}).get("locations", []):
             for marker in loc.get("markers", []):
-                for r in marker.get("readings", []):
+                self._ensure_marker_structure(marker)
+                
+                # Get devices from spot readings
+                for r in marker["readings"]["spot"]:
                     device = r.get("device")
                     if device and str(device).strip():
                         devices.add(str(device).strip())
+                        
+                # Get devices from spectral readings
+                for r in marker["readings"]["spectral"]:
+                    device = r.get("device")
+                    if device and str(device).strip():
+                        devices.add(str(device).strip())
+                        
+                # Get devices from area device_locations
+                for entry in marker["device_locations"]:
+                    device = entry.get("device")
+                    if device and str(device).strip():
+                        devices.add(str(device).strip())
+                        
         return sorted(list(devices))
 
     def get_available_labels(self):
-        """Loads unique marker labels from the maps."""
-        labels = set()
-        for loc in self.data.get("maps", {}).get("locations", []):
-            for marker in loc.get("markers", []):
-                label = marker.get("label", "")
-                if label:
-                    labels.add(label)
-        return sorted(list(labels))
+        return sorted(list(self.get_all_used_labels()))
 
-    def get_flat_readings(self):
-        """Flattens readings for UI tables (Spot/Spectral)."""
+    def get_flat_readings(self, reading_type="all"):
+        """
+        Flattens readings for UI tables.
+        reading_type: "spot", "spectral", or "all"
+        """
         readings = []
         for loc in self.data.get("maps", {}).get("locations", []):
             for marker in loc.get("markers", []):
+                self._ensure_marker_structure(marker)
                 label = marker.get("label", "")
-                for r in marker.get("readings", []):
-                    clean_r = {k.strip(): v for k, v in r.items()}
-                    row = {
-                        "location": label,
-                        "device": clean_r.get("device", ""),
-                        "logtime": clean_r.get("datetime", ""),
-                    }
-                    if self.mode == "spot":
-                        row["observations"] = clean_r.get("observations", "")
-                    elif self.mode == "spectral":
-                        row["chemicals_identified"] = clean_r.get("chemicals_identified", "")
-                        row["comments"] = clean_r.get("comments", "")
-                        row["file_ref"] = clean_r.get("file_ref", "")
-                    
-                    # Add any extra keys (like analytes for spot)
-                    for k, v in clean_r.items():
-                        if k not in row and k not in ["datetime", "device", "observations", "chemicals_identified", "comments", "file_ref"]:
-                            row[k] = v
-                    readings.append(row)
+                spot_list = marker["readings"]["spot"]
+                spectral_list = marker["readings"]["spectral"]
+
+                if reading_type in ["spot", "all"]:
+                    for r in spot_list:
+                        clean_r = {k.strip(): v for k, v in r.items()}
+                        row = {
+                            "location": label,
+                            "device": clean_r.get("device", ""),
+                            "logtime": clean_r.get("datetime", ""),
+                            "observations": clean_r.get("observations", ""),
+                        }
+                        for k, v in clean_r.items():
+                            if k not in row and k not in ["datetime", "device", "observations"]:
+                                row[k] = v
+                        readings.append(row)
+
+                if reading_type in ["spectral", "all"]:
+                    for r in spectral_list:
+                        clean_r = {k.strip(): v for k, v in r.items()}
+                        row = {
+                            "location": label,
+                            "device": clean_r.get("device", ""),
+                            "logtime": clean_r.get("datetime", ""),
+                            "chemicals_identified": clean_r.get("chemicals_identified", ""),
+                            "comments": clean_r.get("comments", ""),
+                            "file_ref": clean_r.get("file_ref", ""),
+                        }
+                        readings.append(row)
         return readings
 
-    def set_flat_readings(self, flat_readings, available_analytes=None):
-        """Reconstructs the nested JSON structure from a flat list of readings and saves it."""
+    def set_flat_readings(self, flat_readings, available_analytes=None, reading_type="spot"):
+        """
+        Reconstructs the nested JSON structure from a flat list of readings and saves it.
+        reading_type: "spot" or "spectral"
+        """
         locations_list = self.data.get("maps", {}).get("locations", [])
         
-        # Clear existing readings
+        # Ensure structure and clear existing readings for the specific type being updated
         for loc in locations_list:
             for marker in loc.get("markers", []):
-                marker["readings"] = []
-                
+                self._ensure_marker_structure(marker)
+                if reading_type == "spectral":
+                    marker["readings"]["spectral"] = []
+                else:
+                    marker["readings"]["spot"] = []
+
         # Rebuild readings
         for loc in locations_list:
             for marker in loc.get("markers", []):
+                self._ensure_marker_structure(marker)
                 label = marker.get("label", "")
                 for r in flat_readings:
                     if r.get("location") == label:
@@ -199,48 +230,63 @@ class LocationManager:
                             "datetime": r.get("logtime", ""),
                             "device": r.get("device", ""),
                         }
-                        if self.mode == "spot":
+                        if reading_type == "spectral":
+                            reading_dict["chemicals_identified"] = r.get("chemicals_identified", "")
+                            reading_dict["comments"] = r.get("comments", "")
+                            reading_dict["file_ref"] = r.get("file_ref", "")
+                            marker["readings"]["spectral"].append(reading_dict)
+                        else:
                             reading_dict["observations"] = r.get("observations", "")
                             if available_analytes:
                                 for analyte in available_analytes:
                                     if analyte in r and r[analyte] is not None:
                                         reading_dict[analyte] = r[analyte]
-                        elif self.mode == "spectral":
-                            reading_dict["chemicals_identified"] = r.get("chemicals_identified", "")
-                            reading_dict["comments"] = r.get("comments", "")
-                            reading_dict["file_ref"] = r.get("file_ref", "")
-                            
-                        marker["readings"].append(reading_dict)
+                            marker["readings"]["spot"].append(reading_dict)
         self.save()
 
-    def to_dataframe(self, available_analytes=None):
-        """Converts the location data to a pandas DataFrame (used by main_window for overview/tables)."""
+    def to_dataframe(self, available_analytes=None, reading_type="all"):
+        """
+        Converts the location data to a pandas DataFrame.
+        reading_type: "spot", "spectral", or "all"
+        """
         rows = []
         for loc in self.data.get("maps", {}).get("locations", []):
             for marker in loc.get("markers", []):
+                self._ensure_marker_structure(marker)
                 site = marker.get("label", "") or "Unassigned"
-                for r in marker.get("readings", []):
-                    clean_r = {k.strip(): v for k, v in r.items()}
-                    row = {
-                        "LOG TIME": clean_r.get("datetime"),
-                        "DEVICE": clean_r.get("device", ""),
-                        "SITE": site,
-                    }
-                    if self.mode == "spot":
-                        row["observations"] = clean_r.get("observations", "")
-                        row["Latitude"] = np.nan
-                        row["Longitude"] = np.nan
+                spot_list = marker["readings"]["spot"]
+                spectral_list = marker["readings"]["spectral"]
+
+                if reading_type in ["spot", "all"]:
+                    for r in spot_list:
+                        clean_r = {k.strip(): v for k, v in r.items()}
+                        row = {
+                            "LOG TIME": clean_r.get("datetime"),
+                            "DEVICE": clean_r.get("device", ""),
+                            "SITE": site,
+                            "observations": clean_r.get("observations", ""),
+                            "Latitude": np.nan,
+                            "Longitude": np.nan,
+                        }
                         if available_analytes:
                             for analyte in available_analytes:
                                 row[analyte] = clean_r.get(analyte)
                                 row[f"INVALID_{analyte}"] = 0
-                    elif self.mode == "spectral":
-                        row["chemicals_identified"] = clean_r.get("chemicals_identified", "")
-                        row["comments"] = clean_r.get("comments", "")
-                        row["file_ref"] = clean_r.get("file_ref", "")
+                        rows.append(row)
+
+                if reading_type in ["spectral", "all"]:
+                    for r in spectral_list:
+                        clean_r = {k.strip(): v for k, v in r.items()}
+                        row = {
+                            "LOG TIME": clean_r.get("datetime"),
+                            "DEVICE": clean_r.get("device", ""),
+                            "SITE": site,
+                            "chemicals_identified": clean_r.get("chemicals_identified", ""),
+                            "comments": clean_r.get("comments", ""),
+                            "file_ref": clean_r.get("file_ref", ""),
+                        }
+                        rows.append(row)
                         
-                    rows.append(row)
-        
         df = pd.DataFrame(rows)
         if not df.empty and 'LOG TIME' in df.columns:
             df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')

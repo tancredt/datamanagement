@@ -7,6 +7,8 @@ import json
 
 logger = logging.getLogger(__name__)
 
+#This file is generally for importing raw area data
+
 # ==========================================
 # 1. UTILITIES
 # ==========================================
