@@ -1,314 +1,440 @@
 import os
-import sys
-import pandas as pd
+import logging
+from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
-    QScrollArea, QFrame, QPushButton, QHeaderView
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+    QTableWidget, QTableWidgetItem, QScrollArea, QFrame, QSizePolicy,
+    QGraphicsDropShadowEffect
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 
-class CollapsibleBox(QWidget):
-    """A simple accordion-style collapsible container."""
-    def __init__(self, title="", parent=None):
+# ✅ Use reader module for all data access
+from datamanagement import reader
+
+logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────────────────
+# LIGHT THEME COLORS
+# ──────────────────────────────────────────────────────────
+BG_COLOR = "#F3F4F6"
+CARD_BG = "#FFFFFF"
+CARD_BORDER = "#E5E7EB"
+TEXT_PRIMARY = "#111827"
+TEXT_SECONDARY = "#6B7280"
+TABLE_HEADER_BG = "#F9FAFB"
+
+# Clean, vibrant accent colors for light mode
+COLORS = {
+    "spot": "#3B82F6",       # Blue
+    "area": "#8B5CF6",       # Purple
+    "spectral": "#EC4899",   # Pink
+    "exposure": "#F59E0B",   # Amber
+    "plume": "#10B981"       # Emerald
+}
+
+
+class DashboardCard(QFrame):
+    """A clean, modern card for the dashboard."""
+    
+    def __init__(self, title, icon, accent_color, parent=None):
         super().__init__(parent)
-        self.is_expanded = False  # Start collapsed to save space
-
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-
-        self.toggle_button = QPushButton(title)
-        self.toggle_button.setCheckable(True)
-        self.toggle_button.setChecked(self.is_expanded)
-        self.toggle_button.setStyleSheet("""
-            QPushButton {
-                text-align: left; padding: 10px 12px;
-                background-color: #e0e0e0; border: 1px solid #b0b0b0;
-                border-radius: 4px; font-weight: bold; font-size: 13px;
-            }
-            QPushButton:hover { background-color: #d0d0d0; }
-            QPushButton:checked { background-color: #c0c0c0; }
+        self.accent_color = accent_color
+        self.setStyleSheet(f"""
+            DashboardCard {{
+                background-color: {CARD_BG};
+                border: 1px solid {CARD_BORDER};
+                border-top: 4px solid {accent_color};
+                border-radius: 8px;
+            }}
         """)
-        self.toggle_button.clicked.connect(self.toggle)
-        main_layout.addWidget(self.toggle_button)
-
-        self.content_area = QFrame()
-        self.content_area.setStyleSheet("""
-            QFrame {
-                background-color: #f8f9fa; border: 1px solid #b0b0b0;
-                border-top: none; border-radius: 0 0 4px 4px;
-            }
+        
+        # Add a subtle drop shadow
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setXOffset(0)
+        shadow.setYOffset(4)
+        shadow.setColor(QColor(0, 0, 0, 25))
+        self.setGraphicsEffect(shadow)
+        
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(20, 15, 20, 20)
+        self.layout.setSpacing(12)
+        
+        # Header
+        header = QHBoxLayout()
+        title_lbl = QLabel(f"{icon}  {title}")
+        title_lbl.setStyleSheet(f"""
+            font-size: 15px; 
+            font-weight: 700; 
+            color: {TEXT_PRIMARY}; 
         """)
-        self.content_layout = QVBoxLayout(self.content_area)
-        self.content_layout.setContentsMargins(12, 12, 12, 12)
-        self.content_layout.setAlignment(Qt.AlignTop)
-        main_layout.addWidget(self.content_area)
+        header.addWidget(title_lbl)
+        header.addStretch()
+        self.layout.addLayout(header)
+        
+        # Divider
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background-color: {CARD_BORDER};")
+        self.layout.addWidget(divider)
+    
+    def add_widget(self, widget):
+        self.layout.addWidget(widget)
+    
+    def add_layout(self, layout):
+        self.layout.addLayout(layout)
 
-        self.content_area.setVisible(self.is_expanded)
 
-    def toggle(self):
-        self.is_expanded = not self.is_expanded
-        self.content_area.setVisible(self.is_expanded)
-
-class OverviewView(QWidget):
-    """Displays a high-level summary of Area, Spot, Spectral, and Exposure data using accordions."""
-    def __init__(self, analyte_dec_pls, parent=None):
+class OverviewWidget(QWidget):
+    """Clean, light-themed grid-based overview widget."""
+    
+    def __init__(self, incident_path, parent=None):
         super().__init__(parent)
-        self.analyte_dec_pls = analyte_dec_pls
+        self.incident_path = incident_path
+        
+        # Apply global light theme
+        self.setStyleSheet(f"""
+            QWidget {{ background-color: {BG_COLOR}; color: {TEXT_PRIMARY}; }}
+            QScrollArea {{ border: none; background-color: transparent; }}
+            QScrollBar:vertical {{
+                border: none; background: {BG_COLOR}; width: 10px; margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: #D1D5DB; min-height: 20px; border-radius: 5px;
+            }}
+            QTableWidget {{ 
+                background-color: {CARD_BG}; 
+                color: {TEXT_PRIMARY}; 
+                border: 1px solid {CARD_BORDER}; 
+                border-radius: 4px;
+                gridline-color: {CARD_BORDER};
+                font-size: 12px;
+            }}
+            QTableWidget::item {{ padding: 4px; }}
+            QTableWidget::item:alternate {{ background-color: #F9FAFB; }}
+            QHeaderView::section {{ 
+                background-color: {TABLE_HEADER_BG}; 
+                color: {TEXT_SECONDARY}; 
+                border: none; 
+                border-bottom: 1px solid {CARD_BORDER};
+                padding: 6px; 
+                font-weight: 600;
+                font-size: 11px;
+            }}
+        """)
+        
         self._setup_ui()
-
+        self._load_data()
+    
+    def refresh(self):
+        self._load_data()
+    
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(30, 30, 30, 30)
         
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        # Dashboard Title
+        title = QLabel(f"Incident Overview")
+        title.setStyleSheet(f"font-size: 24px; font-weight: 800; color: {TEXT_PRIMARY};")
+        main_layout.addWidget(title)
         
-        container = QWidget()
-        self.container_layout = QVBoxLayout(container)
-        self.container_layout.setAlignment(Qt.AlignTop)
-
-        # Area Accordions
-        self.box_area_site = CollapsibleBox("Area By Site")
-        self.tree_area_site = self._create_tree()
-        self.box_area_site.content_layout.addWidget(self.tree_area_site)
-        self.container_layout.addWidget(self.box_area_site)
-
-        self.box_area_device = CollapsibleBox("Area By Device")
-        self.tree_area_device = self._create_tree()
-        self.box_area_device.content_layout.addWidget(self.tree_area_device)
-        self.container_layout.addWidget(self.box_area_device)
-
-        # Spot Accordions
-        self.box_spot_site = CollapsibleBox("Spot By Site")
-        self.tree_spot_site = self._create_tree()
-        self.box_spot_site.content_layout.addWidget(self.tree_spot_site)
-        self.container_layout.addWidget(self.box_spot_site)
-
-        self.box_spot_device = CollapsibleBox("Spot By Device")
-        self.tree_spot_device = self._create_tree()
-        self.box_spot_device.content_layout.addWidget(self.tree_spot_device)
-        self.container_layout.addWidget(self.box_spot_device)
-
-        # Spectral Accordions
-        self.box_spectral_site = CollapsibleBox("Spectral By Site")
-        self.tree_spectral_site = self._create_tree()
-        self.box_spectral_site.content_layout.addWidget(self.tree_spectral_site)
-        self.container_layout.addWidget(self.box_spectral_site)
-
-        self.box_spectral_device = CollapsibleBox("Spectral By Device")
-        self.tree_spectral_device = self._create_tree()
-        self.box_spectral_device.content_layout.addWidget(self.tree_spectral_device)
-        self.container_layout.addWidget(self.box_spectral_device)
-
-        self.box_exposure_site = CollapsibleBox("Exposures By Area")
-        self.tree_exposure_site = self._create_tree()
-        self.box_exposure_site.content_layout.addWidget(self.tree_exposure_site)
-        self.container_layout.addWidget(self.box_exposure_site)
-
-        self.box_exposure_device = CollapsibleBox("Exposures By Identifier")
-        self.tree_exposure_device = self._create_tree()
-        self.box_exposure_device.content_layout.addWidget(self.tree_exposure_device)
-        self.container_layout.addWidget(self.box_exposure_device)
-
-        self.container_layout.addStretch()
-        scroll.setWidget(container)
-        layout.addWidget(scroll)
-
-    def _create_tree(self):
-        tree = QTreeWidget()
-        tree.setHeaderLabels(["Metric", "Value"])
-        tree.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        tree.header().setSectionResizeMode(1, QHeaderView.Stretch)
-        tree.setAlternatingRowColors(True)
-        tree.setMaximumHeight(300)
-        return tree
-
-    def update_data(self, area_data, spot_data, spectral_data, exposure_data=None):
-        self.box_area_site.setVisible(True)
-        self.box_area_device.setVisible(True)
-        self.box_spot_site.setVisible(True)
-        self.box_spot_device.setVisible(True)
-        self.box_spectral_site.setVisible(True)
-        self.box_spectral_device.setVisible(True)
-        self.box_exposure_site.setVisible(True)
-        self.box_exposure_device.setVisible(True)
-
-        # Populate Area trees
-        self._populate_tree(self.tree_area_site, area_data, 'SITE', "Site")
-        self._populate_tree(self.tree_area_device, area_data, 'DEVICE', "Device")
-
-        # Populate Spot trees
-        self._populate_tree(self.tree_spot_site, spot_data, 'SITE', "Site")
-        self._populate_tree(self.tree_spot_device, spot_data, 'DEVICE', "Device")
-
-        # Populate Spectral trees
-        self._populate_spectral_tree(self.tree_spectral_site, spectral_data, 'SITE', "Site")
-        self._populate_spectral_tree(self.tree_spectral_device, spectral_data, 'DEVICE', "Device")
-
-        # Populate Exposure trees
-        self._populate_exposure_tree(self.tree_exposure_site, exposure_data, 'SITE', "Area")
-        self._populate_exposure_tree(self.tree_exposure_device, exposure_data, 'DEVICE', "Identifier")
-
-    def _populate_tree(self, tree, df, group_col, label_prefix):
-        """Helper to populate a QTreeWidget with grouped Area/Spot data."""
-        tree.clear()
-        if df is None or df.empty:
-            item = QTreeWidgetItem(["No Data Available", ""])
-            tree.addTopLevelItem(item)
-            return
-
-        df = df.copy()
-        if 'LOG TIME' in df.columns:
-            df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-            df = df.dropna(subset=['LOG TIME'])
-
-        if df.empty or group_col not in df.columns:
-            item = QTreeWidgetItem(["No Data Available", ""])
-            tree.addTopLevelItem(item)
-            return
-
-        groups = df[group_col].dropna().unique()
-        groups = sorted([str(g) for g in groups if str(g).strip()])
-
-        for group_name in groups:
-            group_df = df[df[group_col] == group_name]
-            total_readings = len(group_df)
-            top_item = QTreeWidgetItem([f"{label_prefix}: {group_name}", f"Total Readings: {total_readings}"])
-            top_item.setExpanded(False)
-
-            if not group_df.empty:
-                last_idx = group_df['LOG TIME'].idxmax()
-                last_row = group_df.loc[last_idx]
-                last_time = last_row['LOG TIME']
-                time_str = last_time.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(last_time) else "N/A"
-                time_item = QTreeWidgetItem(["Last Reading Time", time_str])
-                top_item.addChild(time_item)
-
-                for analyte in self.analyte_dec_pls.keys():
-                    if analyte in group_df.columns:
-                        val = last_row.get(analyte)
-                        if pd.notna(val):
-                            dec_pls = self.analyte_dec_pls.get(analyte, 2)
-                            val_str = f"{val:.{dec_pls}f}"
-                        else:
-                            val_str = "N/A"
-                        analyte_item = QTreeWidgetItem([analyte, val_str])
-                        top_item.addChild(analyte_item)
-            tree.addTopLevelItem(top_item)
-
-    def update_spectral_data(self, spectral_data):
-        """Updates Spectral accordions. Hides Area and Spot."""
-        self.box_area_site.setVisible(False)
-        self.box_area_device.setVisible(False)
-        self.box_spot_site.setVisible(False)
-        self.box_spot_device.setVisible(False)
-        self.box_spectral_site.setVisible(True)
-        self.box_spectral_device.setVisible(True)
-        self._populate_spectral_tree(self.tree_spectral_site, spectral_data, 'SITE', "Site")
-        self._populate_spectral_tree(self.tree_spectral_device, spectral_data, 'DEVICE', "Device")
-
-    def _populate_spectral_tree(self, tree, df, group_col, label_prefix):
-        """Helper to populate a QTreeWidget with grouped Spectral data."""
-        tree.clear()
-        if df is None or df.empty:
-            item = QTreeWidgetItem(["No Data Available", ""])
-            tree.addTopLevelItem(item)
-            return
-
-        df = df.copy()
-        if 'LOG TIME' in df.columns:
-            df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-            df = df.dropna(subset=['LOG TIME'])
-
-        if df.empty or group_col not in df.columns:
-            item = QTreeWidgetItem(["No Data Available", ""])
-            tree.addTopLevelItem(item)
-            return
-
-        groups = df[group_col].dropna().unique()
-        groups = sorted([str(g) for g in groups if str(g).strip()])
-
-        for group_name in groups:
-            group_df = df[df[group_col] == group_name]
-            total_records = len(group_df)
-            top_item = QTreeWidgetItem([f"{label_prefix}: {group_name}", f"Total Records: {total_records}"])
-            top_item.setExpanded(False)
-
-            if not group_df.empty:
-                last_idx = group_df['LOG TIME'].idxmax()
-                last_row = group_df.loc[last_idx]
-                last_time = last_row['LOG TIME']
-                time_str = last_time.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(last_time) else "N/A"
-                time_item = QTreeWidgetItem(["Last Record Time", time_str])
-                top_item.addChild(time_item)
-
-                chems = last_row.get('chemicals_identified', 'N/A')
-                if pd.isna(chems) or not str(chems).strip(): 
-                    chems = 'N/A'
-                chem_item = QTreeWidgetItem(["Chemicals Identified", str(chems)])
-                top_item.addChild(chem_item)
-
-                comments = last_row.get('comments', '')
-                if pd.notna(comments) and str(comments).strip():
-                    comm_item = QTreeWidgetItem(["Comments", str(comments)])
-                    top_item.addChild(comm_item)
-            tree.addTopLevelItem(top_item)
-
-    # ── NEW: EXPOSURE TREE HELPER ──
-    def _populate_exposure_tree(self, tree, df, group_col, label_prefix):
-        """Helper to populate a QTreeWidget with grouped Exposure data."""
-        tree.clear()
-        if df is None or df.empty:
-            item = QTreeWidgetItem(["No Data Available", ""])
-            tree.addTopLevelItem(item)
-            return
-
-        df = df.copy()
-        if 'LOG TIME' in df.columns:
-            df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-            df = df.dropna(subset=['LOG TIME'])
-
-        if df.empty or group_col not in df.columns:
-            item = QTreeWidgetItem(["No Data Available", ""])
-            tree.addTopLevelItem(item)
-            return
-
-        groups = df[group_col].dropna().unique()
-        groups = sorted([str(g) for g in groups if str(g).strip()])
-
-        for group_name in groups:
-            group_df = df[df[group_col] == group_name]
-            total_records = len(group_df)
-            top_item = QTreeWidgetItem([f"{label_prefix}: {group_name}", f"Total Records: {total_records}"])
-            top_item.setExpanded(False)
-
-            if not group_df.empty:
-                last_idx = group_df['LOG TIME'].idxmax()
-                last_row = group_df.loc[last_idx]
-                last_time = last_row['LOG TIME']
-                time_str = last_time.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(last_time) else "N/A"
-                
-                time_item = QTreeWidgetItem(["Last Exposure Start", time_str])
-                top_item.addChild(time_item)
-
-                # Show analyte values (prefer mean, then max, then min)
-                for analyte in self.analyte_dec_pls.keys():
-                    val = None
-                    for suffix in ['_mean', '_max', '_min']:
-                        col_name = f"{analyte}{suffix}"
-                        if col_name in group_df.columns and pd.notna(last_row.get(col_name)):
-                            val = last_row.get(col_name)
-                            break
-
-                    if val is not None and pd.notna(val):
-                        dec_pls = self.analyte_dec_pls.get(analyte, 2)
-                        val_str = f"{val:.{dec_pls}f}"
-                    else:
-                        val_str = "N/A"
-
-                    analyte_item = QTreeWidgetItem([analyte, val_str])
-                    top_item.addChild(analyte_item)
-
-            tree.addTopLevelItem(top_item)
+        subtitle = QLabel(os.path.basename(self.incident_path))
+        subtitle.setStyleSheet(f"font-size: 14px; color: {TEXT_SECONDARY}; margin-bottom: 20px;")
+        main_layout.addWidget(subtitle)
+        
+        # Grid Layout for the 5 cards (3 columns to ensure equal sizing)
+        grid = QGridLayout()
+        grid.setSpacing(20)
+        
+        # 1. Spot Readings
+        self.spot_card = DashboardCard("Spot Readings", "📍", COLORS["spot"])
+        self.spot_stats = self._create_stats_row(COLORS["spot"])
+        self.spot_card.add_layout(self.spot_stats)
+        self.spot_card.add_widget(self._create_section_header("Recent Activity", COLORS["spot"]))
+        self.spot_table = self._create_styled_table()
+        self.spot_card.add_widget(self.spot_table)
+        
+        # 2. Area Readings
+        self.area_card = DashboardCard("Area Readings", "📡", COLORS["area"])
+        self.area_stats = self._create_stats_row(COLORS["area"])
+        self.area_card.add_layout(self.area_stats)
+        self.area_card.add_widget(self._create_section_header("Recent Activity", COLORS["area"]))
+        self.area_table = self._create_styled_table()
+        self.area_card.add_widget(self.area_table)
+        
+        # 3. Spectral Results (No Sites, No Analytes in top row)
+        self.spectral_card = DashboardCard("Spectral Results", "🔬", COLORS["spectral"])
+        self.spectral_stats = self._create_stats_row(COLORS["spectral"], show_sites=False, show_analytes=False)
+        self.spectral_card.add_layout(self.spectral_stats)
+        self.spectral_card.add_widget(self._create_section_header("Chemicals Identified", COLORS["spectral"]))
+        self.spectral_chems_lbl = QLabel("None")
+        self.spectral_chems_lbl.setWordWrap(True)
+        self.spectral_chems_lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 13px; padding: 5px;")
+        self.spectral_card.add_widget(self.spectral_chems_lbl)
+        
+        # 4. Exposures (No Sites in top row)
+        self.exposure_card = DashboardCard("Exposures", "🦺", COLORS["exposure"])
+        self.exposure_stats = self._create_stats_row(COLORS["exposure"], show_sites=False)
+        self.exposure_card.add_layout(self.exposure_stats)
+        self.exposure_card.add_widget(self._create_section_header("Recent Activity", COLORS["exposure"]))
+        self.exposure_table = self._create_styled_table()
+        self.exposure_card.add_widget(self.exposure_table)
+        
+        # 5. Plumes (No Sites, No Analytes in top row)
+        self.plume_card = DashboardCard("Plumes", "💨", COLORS["plume"])
+        self.plume_stats = self._create_stats_row(COLORS["plume"], show_sites=False, show_analytes=False)
+        self.plume_card.add_layout(self.plume_stats)
+        self.plume_card.add_widget(self._create_section_header("Model Files", COLORS["plume"]))
+        plume_scroll = QScrollArea()
+        plume_scroll.setWidgetResizable(True)
+        plume_scroll.setMaximumHeight(140)
+        self.plume_table = self._create_styled_table()
+        plume_scroll.setWidget(self.plume_table)
+        self.plume_card.add_widget(plume_scroll)
+        
+        # Arrange in a 3-column grid for uniform sizing
+        grid.addWidget(self.spot_card, 0, 0)
+        grid.addWidget(self.area_card, 0, 1)
+        grid.addWidget(self.spectral_card, 0, 2)
+        grid.addWidget(self.exposure_card, 1, 0)
+        grid.addWidget(self.plume_card, 1, 1)
+        
+        # Ensure columns and rows stretch equally to fill the space
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+        grid.setRowStretch(0, 1)
+        grid.setRowStretch(1, 1)
+        
+        main_layout.addLayout(grid)
+        main_layout.addStretch()
+    
+    def _create_stats_row(self, color, show_sites=True, show_analytes=True):
+        """Creates a horizontal row of big stat numbers."""
+        row = QHBoxLayout()
+        row.setSpacing(15)
+        
+        # Count
+        row.addLayout(self._create_stat_block("0", "Total", color, "count"))
+        
+        # Date Range (Special block)
+        range_block = QVBoxLayout()
+        range_block.setAlignment(Qt.AlignCenter)
+        val_lbl = QLabel("N/A")
+        val_lbl.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {TEXT_PRIMARY};")
+        val_lbl.setAlignment(Qt.AlignCenter)
+        name_lbl = QLabel("DATE RANGE")
+        name_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {TEXT_SECONDARY};")
+        name_lbl.setAlignment(Qt.AlignCenter)
+        range_block.addWidget(val_lbl)
+        range_block.addWidget(name_lbl)
+        row.addLayout(range_block)
+        setattr(self, f"_temp_range_lbl_{color}", val_lbl)
+        
+        if show_sites:
+            row.addLayout(self._create_stat_block("0", "Sites", color, "sites"))
+        if show_analytes:
+            row.addLayout(self._create_stat_block("0", "Analytes", color, "analytes"))
+        
+        row.addStretch()
+        return row
+    
+    def _create_stat_block(self, value, label, color, attr_name):
+        """Creates a single big stat block."""
+        block = QVBoxLayout()
+        block.setAlignment(Qt.AlignCenter)
+        
+        val_lbl = QLabel(str(value))
+        val_lbl.setStyleSheet(f"font-size: 28px; font-weight: 800; color: {color};")
+        val_lbl.setAlignment(Qt.AlignCenter)
+        
+        name_lbl = QLabel(label.upper())
+        name_lbl.setStyleSheet(f"font-size: 9px; font-weight: 700; color: {TEXT_SECONDARY}; letter-spacing: 0.5px;")
+        name_lbl.setAlignment(Qt.AlignCenter)
+        
+        block.addWidget(val_lbl)
+        block.addWidget(name_lbl)
+        setattr(self, f"lbl_{attr_name}_{color}", val_lbl)
+        return block
+    
+    def _create_section_header(self, text, color):
+        lbl = QLabel(text.upper())
+        lbl.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {color}; letter-spacing: 0.5px; margin-top: 5px;")
+        return lbl
+    
+    def _create_styled_table(self):
+        table = QTableWidget()
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setMaximumHeight(120)
+        table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        return table
+    
+    # ─────────────────────────────────────────────────────────
+    # DATA LOADING (via reader module)
+    # ─────────────────────────────────────────────────────────
+    
+    def _load_data(self):
+        try:
+            self._load_spot()
+            self._load_area()
+            self._load_spectral()
+            self._load_exposure()
+            self._load_plume()
+        except Exception as e:
+            logger.error(f"Failed to load overview data: {e}")
+    
+    def _update_stats(self, color, count, date_range, sites=None, analytes=None):
+        getattr(self, f"lbl_count_{color}").setText(str(count))
+        getattr(self, f"_temp_range_lbl_{color}").setText(date_range)
+        if sites is not None:
+            getattr(self, f"lbl_sites_{color}").setText(str(sites))
+        if analytes is not None:
+            getattr(self, f"lbl_analytes_{color}").setText(str(analytes))
+    
+    def _load_spot(self):
+        # ✅ Use reader module
+        summary = reader.get_data_summary(self.incident_path, "spot")
+        recent = reader.get_recent_readings(self.incident_path, "spot", limit=5)
+        
+        min_date = summary.get("min_date") or "-"
+        max_date = summary.get("max_date") or "-"
+        dr = f"{min_date} to {max_date}"
+        
+        self._update_stats(
+            COLORS["spot"], 
+            summary.get("count", 0), 
+            dr, 
+            summary.get("sites_count", 0), 
+            summary.get("analytes_count", 0)
+        )
+        
+        # Format recent readings for table
+        table_data = []
+        for r in recent:
+            table_data.append([
+                r.get("site", "-"),
+                r.get("device", "-"),
+                r.get("logtime", "-"),
+                r.get("analyte", "-"),
+                r.get("value", "-")
+            ])
+        
+        self._populate_table(self.spot_table, ["Site", "Device", "Time", "Analyte", "Value"], table_data)
+    
+    def _load_area(self):
+        # ✅ Use reader module
+        summary = reader.get_data_summary(self.incident_path, "area")
+        recent = reader.get_recent_readings(self.incident_path, "area", limit=5)
+        
+        min_date = summary.get("min_date") or "-"
+        max_date = summary.get("max_date") or "-"
+        dr = f"{min_date} to {max_date}"
+        
+        self._update_stats(
+            COLORS["area"], 
+            summary.get("count", 0), 
+            dr, 
+            summary.get("sites_count", 0), 
+            summary.get("analytes_count", 0)
+        )
+        
+        # Format recent readings for table
+        table_data = []
+        for r in recent:
+            table_data.append([
+                r.get("device", "-"),
+                r.get("logtime", "-"),
+                r.get("analyte", "-"),
+                r.get("value", "-")
+            ])
+        
+        self._populate_table(self.area_table, ["Device", "Time", "Analyte", "Value"], table_data)
+    
+    def _load_spectral(self):
+        # ✅ Use reader module
+        summary = reader.get_data_summary(self.incident_path, "spectral")
+        chems = reader.get_spectral_chemicals(self.incident_path)
+        
+        min_date = summary.get("min_date") or "-"
+        max_date = summary.get("max_date") or "-"
+        dr = f"{min_date} to {max_date}"
+        
+        self._update_stats(COLORS["spectral"], summary.get("count", 0), dr)
+        
+        self.spectral_chems_lbl.setText(", ".join(chems) if chems else "None identified yet.")
+    
+    def _load_exposure(self):
+        # ✅ Use reader module
+        summary = reader.get_data_summary(self.incident_path, "exposure")
+        recent = reader.get_recent_readings(self.incident_path, "exposure", limit=5)
+        
+        min_date = summary.get("min_date") or "-"
+        max_date = summary.get("max_date") or "-"
+        dr = f"{min_date} to {max_date}"
+        
+        self._update_stats(
+            COLORS["exposure"], 
+            summary.get("count", 0), 
+            dr, 
+            analytes=summary.get("analytes_count", 0)
+        )
+        
+        # Format recent exposures for table
+        table_data = []
+        for r in recent:
+            table_data.append([
+                r.get("identifier", "-"),
+                r.get("start_dt", "-"),
+                r.get("stop_dt", "-"),
+                r.get("area", "-")
+            ])
+        
+        self._populate_table(self.exposure_table, ["ID", "Start", "Stop", "Area"], table_data)
+    
+    def _load_plume(self):
+        # ✅ Use reader module
+        summary = reader.get_data_summary(self.incident_path, "plume")
+        plumes = reader.get_plume_summary(self.incident_path)
+        
+        min_date = summary.get("min_date") or "-"
+        max_date = summary.get("max_date") or "-"
+        dr = f"{min_date} to {max_date}"
+        
+        self._update_stats(COLORS["plume"], summary.get("count", 0), dr)
+        
+        # Format plumes for table with local time conversion
+        table_data = []
+        for p in plumes:
+            file_name = p.get("file_name", "-")
+            model_dt_str = p.get("model_dt", "")
+            
+            # Convert to local time
+            local_time_str = model_dt_str or "-"
+            if model_dt_str:
+                try:
+                    clean_str = model_dt_str.replace('Z', '+00:00')
+                    dt = datetime.fromisoformat(clean_str)
+                    local_time_str = dt.astimezone().strftime('%Y-%m-%d %H:%M:%S') if dt.tzinfo else dt.strftime('%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    local_time_str = model_dt_str
+            
+            table_data.append([file_name, local_time_str])
+        
+        self._populate_table(self.plume_table, ["File Name", "Model Datetime (Local)"], table_data)
+    
+    def _populate_table(self, table, headers, rows):
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setRowCount(len(rows))
+        
+        for r, row in enumerate(rows):
+            for c, val in enumerate(row):
+                item = QTableWidgetItem(str(val) if val is not None else "-")
+                item.setForeground(QColor(TEXT_SECONDARY) if c > 0 else QColor(TEXT_PRIMARY))
+                table.setItem(r, c, item)
+        
+        table.resizeColumnsToContents()

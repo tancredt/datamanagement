@@ -30,6 +30,7 @@ from battery_analysis_dialog import BatteryAnalysisDialog
 from objective_dialog import ObjectiveDialog
 from spectral_results_dialog import SpectralResultsDialog
 from preferences_dialog import PreferencesDialog
+from plume_dialog import PlumeDialog
 
 # New self-contained data view components
 from table_view import TableView
@@ -135,13 +136,18 @@ class DataAnalyzerGUI(QMainWindow):
         self._active_incident = data
         self._update_app_state(data is not None)
         self._update_status_bar()
-        
         if data is not None:
-            # Load the default view for the current data type
-            self._load_view(0)
-            self.nav_btns[0].setChecked(True)
-            self.central_stack.setCurrentIndex(1)
+            # ==========================================
+            # ✅ DEFAULT TO OVERVIEW VIEW (Index 5)
+            # ==========================================
+            self._load_view(5)
             
+            # Uncheck all standard navigation buttons since Overview is separate
+            for btn in self.nav_btns.values():
+                btn.setChecked(False)
+            # ==========================================
+            
+            self.central_stack.setCurrentIndex(1)
             self.data_type_combo.blockSignals(True)
             self.data_type_combo.setCurrentText("Spot Readings")
             self.data_type_combo.blockSignals(False)
@@ -159,7 +165,7 @@ class DataAnalyzerGUI(QMainWindow):
             self.action_warmzone, self.action_fireground, self.action_community,
             self.action_thresholds, self.action_clear_objectives,
             self.action_publish, self.action_spectral_results,
-            self.action_exposures, self.action_import_plumes, self.action_delete_plumes
+            self.action_exposures, self.action_plumes
         ]
         for action in actions:
             action.setEnabled(has_incident)
@@ -216,6 +222,20 @@ class DataAnalyzerGUI(QMainWindow):
         dock_layout.setContentsMargins(10, 15, 10, 15)
         dock_layout.setSpacing(10)
 
+        self.btn_overview = QPushButton("Overview")
+        self.btn_overview.setMinimumHeight(45)
+        self.btn_overview.setCursor(Qt.PointingHandCursor)
+        self.btn_overview.setStyleSheet("""
+            QPushButton { 
+                text-align: center; border: none; border-radius: 6px; 
+                font-size: 14px; color: white; background-color: #8b5cf6; font-weight: bold;  
+            }
+            QPushButton:hover { background-color: #7c3aed; }
+        """)
+        self.btn_overview.clicked.connect(self._show_overview)
+        dock_layout.addWidget(self.btn_overview)
+        dock_layout.addSpacing(5)
+        
         self.data_type_combo = QComboBox()
         self.data_type_combo.addItems(["Spot Readings", "Area Readings", "Spectral Results", "Exposures", "Plume"])
         self.data_type_combo.setMinimumHeight(35)
@@ -338,10 +358,14 @@ class DataAnalyzerGUI(QMainWindow):
         exposure_menu = data_menu.addMenu("E&xposures")
         self.action_exposures = exposure_menu.addAction("&Exposures...", self._on_exposures)
 
-        plumes_menu = data_menu.addMenu("&Plumes")
-        self.action_import_plumes = plumes_menu.addAction("&Import...", self._on_import_plumes)
-        self.action_delete_plumes = plumes_menu.addAction("&Delete...", self._on_delete_plumes)
-
+        spectral_menu = data_menu.addMenu("&Spectral Results")
+        self.action_spectral_results = spectral_menu.addAction("&Results...", self._on_spectral_results)
+        exposure_menu = data_menu.addMenu("E&xposures")
+        self.action_exposures = exposure_menu.addAction("&Exposures...", self._on_exposures)
+        
+        # ✅ Replaced the plumes_menu submenu with a single action
+        self.action_plumes = data_menu.addAction("&Plumes...", self._on_plumes)
+        
         # ── Reports Menu ──
         reports_menu = menubar.addMenu("&Reports")
         self.action_hotzone = reports_menu.addAction("&Hotzone", self._on_report_hotzone)
@@ -510,6 +534,12 @@ class DataAnalyzerGUI(QMainWindow):
         for lbl, text in zip(self.filter_labels, texts):
             lbl.setText(text)
 
+    def _refresh_current_view(self):
+        """Helper to refresh the currently active view in the stack."""
+        current_widget = self.view_stack.currentWidget()
+        if current_widget and hasattr(current_widget, 'refresh'):
+            current_widget.refresh()
+            
     # ─────────────────────────────────────────────────────────
     # DYNAMIC VIEW ENGINE
     # ─────────────────────────────────────────────────────────
@@ -536,7 +566,7 @@ class DataAnalyzerGUI(QMainWindow):
         self._clear_current_view()
         if not self.active_incident_path:
             return
-            
+        
         view = None
         if index == 0:
             view = TableView(incident_path=self.active_incident_path, data_type=self.data_type, parent=self)
@@ -547,7 +577,6 @@ class DataAnalyzerGUI(QMainWindow):
         elif index == 3:
             view = SummaryChartView(incident_path=self.active_incident_path, data_type=self.data_type, parent=self)
         elif index == 4:
-            # SummaryMapView needs extra map parameters
             manager = LocationManager(self.active_incident_path)
             maps_data = manager.get_maps_data()
             map_filenames = list(maps_data.keys())
@@ -560,8 +589,14 @@ class DataAnalyzerGUI(QMainWindow):
                 maps_data=maps_data,
                 parent=self
             )
+        # ==========================================
+        # NEW: OVERVIEW WIDGET
+        # ==========================================
+        elif index == 5:
+            from overview_view import OverviewWidget
+            view = OverviewWidget(incident_path=self.active_incident_path, parent=self)
+        # ==========================================
 
-        # ✅ FIX: Add the view to the stack and set it as the current widget
         if view is not None:
             self.view_stack.addWidget(view)
             self.view_stack.setCurrentWidget(view)
@@ -780,10 +815,7 @@ class DataAnalyzerGUI(QMainWindow):
         dialog = SpotReadingsDialog(self, self.active_incident_path)
         if dialog.exec() == QDialog.Accepted:
             self._update_status_bar("💾 Spot readings saved.")
-            if self.data_type == "spot":
-                current_widget = self.view_stack.currentWidget()
-                if hasattr(current_widget, 'refresh'):
-                    current_widget.refresh()
+            self._refresh_current_view()
 
     @Slot()
     def _on_spectral_results(self):
@@ -792,10 +824,7 @@ class DataAnalyzerGUI(QMainWindow):
         dialog = SpectralResultsDialog(self, self.active_incident_path)
         if dialog.exec() == QDialog.Accepted:
             self._update_status_bar("💾 Spectral records saved.")
-            if self.data_type == "spectral":
-                current_widget = self.view_stack.currentWidget()
-                if hasattr(current_widget, 'refresh'):
-                    current_widget.refresh()
+            self._refresh_current_view()
 
     @Slot()
     def _on_exposures(self):
@@ -805,70 +834,17 @@ class DataAnalyzerGUI(QMainWindow):
         dialog = ExposuresDialog(self, self.active_incident_path)
         if dialog.exec() == QDialog.Accepted:
             self._update_status_bar("💾 Exposures saved.")
-            if self.data_type == "exposure":
-                current_widget = self.view_stack.currentWidget()
-                if hasattr(current_widget, 'refresh'):
-                    current_widget.refresh()
+            self._refresh_current_view()
 
     @Slot()
-    def _on_import_plumes(self):
+    def _on_plumes(self):
         if not self.active_incident_path:
             self._update_status_bar("⚠️ No active incident.")
             return
-        plumes_dir = os.path.join(self.active_incident_path, "plumes")
-        os.makedirs(plumes_dir, exist_ok=True)
-        files, _ = QFileDialog.getOpenFileNames(self, "Select Plume Images", "", "PNG Files (*.png);;All Files (*)")
-        if not files: 
-            return
-        copied_count = 0
-        for src in files:
-            dst = os.path.join(plumes_dir, os.path.basename(src))
-            try:
-                shutil.copy(src, dst)
-                copied_count += 1
-            except Exception as e:
-                logger.error(f"Failed to copy {src}: {e}")
-        QMessageBox.information(self, "Import Complete", f"Successfully copied {copied_count} file(s) to the plumes directory.")
-        self._update_status_bar(f"📂 Imported {copied_count} plume image(s).")
-        if self.data_type == "plume":
-            current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
-            self._load_view(current_idx)
-
-    @Slot()
-    def _on_delete_plumes(self):
-        if not self.active_incident_path:
-            self._update_status_bar("⚠️ No active incident.")
-            return
-        plumes_dir = os.path.join(self.active_incident_path, "plumes")
-        if not os.path.exists(plumes_dir):
-            QMessageBox.information(self, "Info", "The plumes directory does not exist yet.")
-            return
-        dialog = QFileDialog(self, "Select Plume Images to Delete", plumes_dir, "PNG Files (*.png);;All Files (*)")
-        dialog.setFileMode(QFileDialog.ExistingFiles)
-        dialog.setLabelText(QFileDialog.Accept, "Select")
-        if dialog.exec(): 
-            files = dialog.selectedFiles()
-        else: 
-            return
-        if not files: 
-            return
-        reply = QMessageBox.question(
-            self, "Confirm Deletion", f"Are you sure you want to delete {len(files)} selected file(s)?\n\nThis action cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            deleted_count = 0
-            for f in files:
-                try:
-                    os.remove(f)
-                    deleted_count += 1
-                except Exception as e:
-                    logger.error(f"Failed to delete {f}: {e}")
-            QMessageBox.information(self, "Delete Complete", f"Successfully deleted {deleted_count} file(s).")
-            self._update_status_bar(f"🗑️ Deleted {deleted_count} plume image(s).")
-            if self.data_type == "plume":
-                current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
-                self._load_view(current_idx)
+        dialog = PlumeDialog(self, self.active_incident_path)
+        if dialog.exec() == QDialog.Accepted:
+            self._update_status_bar("💾 Plumes updated.")
+            self._refresh_current_view()
 
     @Slot()
     def _on_device_locations(self):
@@ -876,16 +852,16 @@ class DataAnalyzerGUI(QMainWindow):
             return
         dialog = DeviceLocationsDialog(self, self.active_incident_path)
         if dialog.exec() == QDialog.Accepted:
-            if self.data_type == "area":
-                current_widget = self.view_stack.currentWidget()
-                if hasattr(current_widget, 'refresh'):
-                    current_widget.refresh()
+            self._refresh_current_view()
 
     @Slot()
     def _on_device_validations(self):
         if not self.active_incident_path: 
             return
-        DeviceValidationsDialog(self, self.active_incident_path).exec()
+        # Note: Changed to capture the dialog result so we can refresh on success
+        dialog = DeviceValidationsDialog(self, self.active_incident_path)
+        if dialog.exec() == QDialog.Accepted:
+            self._refresh_current_view()
 
     @Slot()
     def _on_battery_analysis(self):
@@ -893,6 +869,14 @@ class DataAnalyzerGUI(QMainWindow):
             return
         BatteryAnalysisDialog(self, self.active_incident_path).exec()
 
+    @Slot()
+    def _show_overview(self):
+        """Loads the Overview grid into the central view stack."""
+        if not self.active_incident_path:
+            return
+        # Index 5 will be our designated slot for the Overview widget
+        self._load_view(5)
+        
     @Slot()
     def _on_import_area(self):
         if not self.active_incident_path:

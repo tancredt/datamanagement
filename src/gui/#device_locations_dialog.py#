@@ -4,25 +4,25 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QComboBox,
     QTableWidget, QTableWidgetItem, QPushButton, QDialogButtonBox,
     QLabel, QMessageBox, QHeaderView, QFormLayout, QDateTimeEdit, QLineEdit,
-    QWidget, QStyle, QCheckBox
+    QWidget, QStyle, QCheckBox, QProgressDialog
 )
-from PySide6.QtCore import Qt, QDateTime, QSize
+from PySide6.QtCore import Qt, QDateTime, QSize, QThread, Signal
 from gps_analysis_dialog import GPSAnalysisDialog
 from map_viewer_dialog import MapViewerDialog
 from datamanagement.db_manager import IncidentDatabase
+from datamanagement.updater import update_site_from_device_locations
 
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
 INFINITY_DATE = QDateTime(9999, 12, 31, 23, 59, 59)
-
 
 class AddDeviceLocationDialog(QDialog):
     def __init__(self, parent=None, incident_path=None, initial_data=None, existing_devices=None, exclude_index=None):
         super().__init__(parent)
         self.incident_path = incident_path
         self.db = IncidentDatabase(incident_path)
-
-        # Populate choices directly from the database
+        
+        # ✅ Populate choices directly from the database
         self.available_labels = self.db.get_markers()
         self.available_devices = self.db.get_devices("area")
         
@@ -38,7 +38,6 @@ class AddDeviceLocationDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
-
         form = QFormLayout()
         form.setSpacing(8)
         form.setLabelAlignment(Qt.AlignRight)
@@ -89,26 +88,23 @@ class AddDeviceLocationDialog(QDialog):
         if self.initial_data:
             self.cmb_labels.setCurrentText(self.initial_data.get("location", ""))
             self.cmb_device.setCurrentText(self.initial_data.get("device", ""))
-            
             dt_start = QDateTime.fromString(self.initial_data.get("start", ""), DATE_FORMAT)
             if dt_start.isValid():
                 self.dt_start.setDateTime(dt_start)
-                
             stop_val = self.initial_data.get("stop", "")
             if stop_val:
                 self.chk_has_stop.setChecked(True)
                 dt_stop = QDateTime.fromString(stop_val, DATE_FORMAT)
                 if dt_stop.isValid():
                     self.dt_stop.setDateTime(dt_stop)
-                    
             self.txt_comment.setText(self.initial_data.get("comment", ""))
 
         layout.addLayout(form)
         layout.addSpacing(10)
-
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.setMinimumHeight(34)
         layout.addWidget(btn_box)
+
         btn_box.rejected.connect(self.reject)
         ok_button = btn_box.button(QDialogButtonBox.Ok)
         ok_button.clicked.connect(self._validate_and_accept)
@@ -116,12 +112,10 @@ class AddDeviceLocationDialog(QDialog):
     def _validate_and_accept(self):
         location = self.cmb_labels.currentText().strip()
         device_id = self.cmb_device.currentText().strip()
-
         if not location:
             QMessageBox.warning(self, "Validation Error", "Location (Marker Label) is mandatory.")
             self.cmb_labels.setFocus()
             return
-
         if not device_id:
             QMessageBox.warning(self, "Validation Error", "Device is mandatory.")
             self.cmb_device.setFocus()
@@ -140,15 +134,14 @@ class AddDeviceLocationDialog(QDialog):
         for i, dev in enumerate(self.existing_devices):
             if self.exclude_index is not None and i == self.exclude_index:
                 continue
-
             ex_start_str = dev.get("start", "")
             ex_stop_str = dev.get("stop", "")
             ex_device = dev.get("device", "")
             ex_location = dev.get("location", "")
-
+            
             ex_start = QDateTime.fromSecsSinceEpoch(QDateTime.fromString(ex_start_str, DATE_FORMAT).toSecsSinceEpoch())
             ex_stop = QDateTime.fromSecsSinceEpoch(QDateTime.fromString(ex_stop_str, DATE_FORMAT).toSecsSinceEpoch()) if ex_stop_str else INFINITY_DATE
-
+            
             if start_dt < ex_stop and ex_start < stop_dt:
                 if device_id == ex_device:
                     QMessageBox.warning(self, "Validation Error",
@@ -158,7 +151,6 @@ class AddDeviceLocationDialog(QDialog):
                     QMessageBox.warning(self, "Validation Error",
                                         f"Location '{location}' is already occupied by device '{device_id}' during this time period.")
                     return
-
         self.accept()
 
     def get_data(self):
@@ -176,16 +168,15 @@ class DeviceLocationsDialog(QDialog):
         super().__init__(parent)
         self.incident_path = incident_path
         self.mapping_dir = os.path.join(incident_path, "mapping")
-
-        # Initialize Database Manager
+        
+        # ✅ Initialize Database Manager
         self.db = IncidentDatabase(incident_path)
         
-        # Load data directly from the DB
-        self.all_devices = self.db.get_area_locations()
-        
+        # ✅ Load data directly from the DB
+        self.all_devices = self.db.get_markers()
         self.available_markers = {}
         self.map_markers = {}
-
+        
         # Load map data for the "Show Map(s)" button
         maps_data = self.db.get_maps_data()
         for fname, markers in maps_data.items():
@@ -195,6 +186,9 @@ class DeviceLocationsDialog(QDialog):
             for m in markers:
                 m['x'] = m.pop('x_coord', 0)
                 m['y'] = m.pop('y_coord', 0)
+                
+        self.worker = None
+        self.progress = None
 
         self.setWindowTitle("Device Locations Manager")
         self.resize(950, 650)
@@ -260,6 +254,7 @@ class DeviceLocationsDialog(QDialog):
         self.btn_analyze_gps.setIcon(self.style().standardIcon(QStyle.SP_FileDialogInfoView))
         self.btn_analyze_gps.setIconSize(QSize(18, 18))
         btn_row.addWidget(self.btn_analyze_gps)
+
         btn_row.addStretch()
         layout.addLayout(btn_row)  
 
@@ -332,10 +327,11 @@ class DeviceLocationsDialog(QDialog):
                 comment=data["comment"]
             )
             if success:
-                self.all_devices = self.db.get_area_locations()
+                self.all_devices = self.db.get_markers()
                 self._populate_filter()
                 self._update_table()
                 QMessageBox.information(self, "Added", f"Device '{data['device']}' added at location '{data['location']}'.")
+                self._start_processing()
             else:
                 QMessageBox.critical(self, "Database Error", msg)
 
@@ -357,10 +353,11 @@ class DeviceLocationsDialog(QDialog):
                     new_data = dialog.get_data()
                     success, msg = self.db.edit_area_location(old_data, new_data)
                     if success:
-                        self.all_devices = self.db.get_area_locations()
+                        self.all_devices = self.db.get_markers()
                         self._populate_filter()
                         self._update_table()
                         QMessageBox.information(self, "Updated", f"Device '{new_data['device']}' updated.")
+                        self._start_processing()
                     else:
                         QMessageBox.critical(self, "Database Error", msg)
         else:
@@ -380,9 +377,10 @@ class DeviceLocationsDialog(QDialog):
                 )
                 if reply == QMessageBox.Yes:
                     self.db.delete_area_location(dev_data)
-                    self.all_devices = self.db.get_area_locations()
+                    self.all_devices = self.db.get_markers()
                     self._populate_filter()
                     self._update_table()
+                    self._start_processing()
         else:
             QMessageBox.information(self, "No Selection", "Please select a row in the table to remove.")
 
@@ -390,5 +388,48 @@ class DeviceLocationsDialog(QDialog):
         dialog = GPSAnalysisDialog(parent=self, incident_path=self.incident_path)
         dialog.exec()
 
+    def _start_processing(self):
+        self.progress = QProgressDialog("Processing data and updating site locations...", None, 0, 0, self)
+        self.progress.setWindowTitle("Processing")
+        self.progress.setWindowModality(Qt.WindowModal)
+        self.progress.setMinimumDuration(0)
+        self.progress.show()
+        self.worker = ProcessingWorker(self.incident_path)
+        self.worker.finished_signal.connect(self._on_processing_finished)
+        self.worker.error_signal.connect(self._on_processing_error)
+        self.worker.start()
+
+    def _on_processing_finished(self):
+        try:
+            if self.progress:
+                self.progress.close()
+            logger.info("✅ Site column updated successfully.")
+        except Exception as e:
+            logger.error(f"Error in processing finished: {e}")
+
+    def _on_processing_error(self, error_msg):
+        if self.progress:
+            self.progress.close()
+        QMessageBox.critical(self, "Processing Error", f"Failed to update site locations:\n{error_msg}")
+
     def reject(self):
         super().reject()
+
+
+class ProcessingWorker(QThread):
+    finished_signal = Signal()
+    error_signal = Signal(str)
+
+    def __init__(self, incident_path):
+        super().__init__()
+        self.incident_path = incident_path
+
+    def run(self):
+        try:
+            logger.info("Updating SITE column with new device locations...")
+            # Note: update_site_from_device_locations currently reads from locations.json.
+            # It will need to be updated to read from the DB in the future.
+            update_site_from_device_locations(self.incident_path)
+            self.finished_signal.emit()
+        except Exception as e:
+            self.error_signal.emit(str(e))

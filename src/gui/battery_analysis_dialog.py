@@ -1,5 +1,5 @@
 import os
-import json
+import sys
 import pandas as pd
 import numpy as np
 import matplotlib
@@ -12,30 +12,32 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QComboBox, QPushButton
 )
 from PySide6.QtCore import Qt, Slot
-from datamanagement.choices import get_available_devices
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+# ✅ Use the efficient battery data function and db_manager
+from datamanagement.reader import read_battery_data
+from datamanagement.db_manager import IncidentDatabase
 
 class BatteryAnalysisDialog(QDialog):
     def __init__(self, parent=None, incident_path=None):
         super().__init__(parent)
         self.incident_path = incident_path
-        if incident_path:
-            self.csv_path = os.path.join(incident_path, "data", "processed", "area_data.csv")
-            self.area_locations_json = os.path.join(incident_path, "mapping", "area_locations.json")
-        else:
-            self.csv_path = "test1.csv"
-            self.area_locations_json = None
-
+        self.db = IncidentDatabase(incident_path) if incident_path else None
+        
         self.setWindowTitle("Battery Analyzer")
         self.resize(1000, 800)
-
+        
         # Selection / regression state
         self._df = None
         self._target_device = None
         self._selection_mode = False
         self._selected_x = []          # matplotlib date numbers (floats)
         self._selection_artists = []   # artists to remove on reset
-
+        
         self.init_ui()
 
     # ------------------------------------------------------------------ UI
@@ -47,15 +49,21 @@ class BatteryAnalysisDialog(QDialog):
         # --- Controls row
         ctrl_layout = QHBoxLayout()
         ctrl_layout.addWidget(QLabel("<b>Select Device:</b>"))
+        
         self.cmb_device = QComboBox()
         self.cmb_device.setEditable(True)
-        self.cmb_device.addItems(get_available_devices(self.incident_path, data_type="area"))
+        
+        # ✅ FIXED: Get area devices directly from database
+        if self.db:
+            area_devices = self.db.get_devices("area")
+            self.cmb_device.addItems(area_devices)
+        
         ctrl_layout.addWidget(self.cmb_device)
-
+        
         self.btn_analyze = QPushButton("Analyze")
         self.btn_analyze.clicked.connect(self._on_analyze)
         ctrl_layout.addWidget(self.btn_analyze)
-
+        
         self.btn_select = QPushButton("Select Points")
         self.btn_select.setCheckable(True)
         self.btn_select.setToolTip(
@@ -64,7 +72,7 @@ class BatteryAnalysisDialog(QDialog):
         )
         self.btn_select.toggled.connect(self._on_toggle_selection)
         ctrl_layout.addWidget(self.btn_select)
-
+        
         ctrl_layout.addStretch()
         layout.addLayout(ctrl_layout)
 
@@ -246,32 +254,28 @@ class BatteryAnalysisDialog(QDialog):
 
     def _load_and_process_data(self, target_device):
         try:
-            df = pd.read_csv(self.csv_path,
-                             dtype={'STATUS': str, 'SITE': str},
-                             low_memory=False)
+            # ✅ Use the efficient battery-specific query
+            df = read_battery_data(self.incident_path, device_label=target_device)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to read CSV file:\n{e}")
+            QMessageBox.critical(self, "Error", f"Failed to read battery data from database:\n{e}")
             return
 
         required_cols = ['LOG TIME', 'DEVICE', 'BATTERY']
         if not all(col in df.columns for col in required_cols):
             QMessageBox.critical(self, "Error",
                                  "Required columns (LOG TIME, DEVICE, BATTERY) "
-                                 "not found in CSV.")
+                                 "not found in database query.")
             return
 
-        df = df[df['DEVICE'] == target_device].copy()
         if df.empty:
             QMessageBox.warning(self, "No Data",
-                                f"No data found for device: {target_device}")
+                                f"No battery data found for device: {target_device}")
             self._clear_ui()
             return
 
-        df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
         df['BATTERY'] = pd.to_numeric(df['BATTERY'], errors='coerce')
         df = df.dropna(subset=['LOG TIME', 'BATTERY'])
-        df = df.sort_values(by='LOG TIME').reset_index(drop=True)
-
+        
         if df.empty:
             QMessageBox.warning(self, "No Data",
                                 f"No valid battery data found for device: "
@@ -280,7 +284,6 @@ class BatteryAnalysisDialog(QDialog):
             return
 
         # Pre-compute matplotlib date numbers (days) for fast regression
-        # FIX: Added .dt accessor for Pandas Series datetime methods
         df['LOG_TIME_NUM'] = mdates.date2num(df['LOG TIME'].dt.to_pydatetime())
 
         self._df = df

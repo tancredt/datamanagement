@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PySide6.QtGui import QColor
 
-# Import the new base class
+# Import the base class
 from base_view import DataView
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -20,10 +20,9 @@ if parent_dir not in sys.path:
 INVALID_BG_COLOR = QColor(255, 200, 200)
 THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
 
-
-# ──────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
 # Paginated Table Model
-# ──────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
 class PaginatedTableModel(QAbstractTableModel):
     def __init__(self, dec_pls_dict=None, page_size=100):
         super().__init__()
@@ -117,6 +116,17 @@ class PaginatedTableModel(QAbstractTableModel):
         else:
             return val > threshold
 
+    def _get_dec_pls_for_column(self, col_name):
+        """Return decimal places for a column, handling _min/_max/_mean suffixes."""
+        if col_name in self.dec_pls_dict:
+            return self.dec_pls_dict[col_name]
+        for suffix in ('_min', '_max', '_mean', '_count'):
+            if col_name.endswith(suffix):
+                base = col_name[:-len(suffix)]
+                if base in self.dec_pls_dict:
+                    return self.dec_pls_dict[base]
+        return None
+
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
@@ -143,8 +153,11 @@ class PaginatedTableModel(QAbstractTableModel):
             return ""
         if pd.isna(val):
             return ""
-        if col_name in self.dec_pls_dict and isinstance(val, (int, float, np.floating, np.integer)):
-            return f"{val:.{self.dec_pls_dict[col_name]}f}"
+
+        # Use helper so aggregated cols (_min, _max, _mean) also format correctly
+        dec_pls = self._get_dec_pls_for_column(col_name)
+        if dec_pls is not None and isinstance(val, (int, float, np.floating, np.integer)):
+            return f"{val:.{dec_pls}f}"
         elif isinstance(val, pd.Timestamp):
             return val.strftime("%Y-%m-%d %H:%M:%S")
         return str(val)
@@ -158,9 +171,9 @@ class PaginatedTableModel(QAbstractTableModel):
         return None
 
 
-# ──────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
 # Table View Widget
-# ──────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
 class TableView(DataView):
     def __init__(self, incident_path, data_type, parent=None):
         super().__init__(incident_path, data_type, parent)
@@ -169,35 +182,37 @@ class TableView(DataView):
         self._render()
 
     def _setup_ui(self):
-         layout = QVBoxLayout(self)
-         layout.setContentsMargins(0, 0, 0, 0)
-         self.table_view = QTableView()
-         self.table_view.setAlternatingRowColors(True)
-         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-         self.table_view.verticalHeader().setVisible(False)
-         layout.addWidget(self.table_view, stretch=1)
-         
-         # Bottom Controls
-         bottom_layout = QHBoxLayout()
-         self.btn_prev_page = QPushButton("Previous")
-         self.lbl_page_info = QLabel("Page 0 of 0")
-         self.btn_next_page = QPushButton("Next")
-         bottom_layout.addStretch()
-         bottom_layout.addWidget(self.btn_prev_page)
-         bottom_layout.addWidget(self.lbl_page_info)
-         bottom_layout.addWidget(self.btn_next_page)
-         bottom_layout.addStretch()
-         layout.addLayout(bottom_layout)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-         self.btn_prev_page.clicked.connect(self._on_prev_page)
-         self.btn_next_page.clicked.connect(self._on_next_page)
+        self.table_view = QTableView()
+        self.table_view.setAlternatingRowColors(True)
+        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table_view.verticalHeader().setVisible(False)
+        layout.addWidget(self.table_view, stretch=1)
+
+        # Bottom Controls
+        bottom_layout = QHBoxLayout()
+        self.btn_prev_page = QPushButton("Previous")
+        self.lbl_page_info = QLabel("Page 0 of 0")
+        self.btn_next_page = QPushButton("Next")
+
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(self.btn_prev_page)
+        bottom_layout.addWidget(self.lbl_page_info)
+        bottom_layout.addWidget(self.btn_next_page)
+        bottom_layout.addStretch()
+        layout.addLayout(bottom_layout)
+
+        self.btn_prev_page.clicked.connect(self._on_prev_page)
+        self.btn_next_page.clicked.connect(self._on_next_page)
 
     def export(self):
         """Satisfies the DataView interface. Exports the full underlying dataframe to a CSV file."""
         if self.model is None or self.model._full_df.empty:
             QMessageBox.warning(self, "No Data", "There is no data to export.")
             return
-            
+
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Export Table to CSV", "filtered_data.csv",
             "CSV Files (*.csv);;All Files (*)"
@@ -216,45 +231,45 @@ class TableView(DataView):
         """Reorders columns to: LOG TIME, SITE, DEVICE, analytes, [aggregated stats], observations, Latitude, Longitude, others."""
         if df is None or df.empty:
             return df
-        
+
         ordered = []
-        
+
         # 1. Core metadata columns first
         for col in ['LOG TIME', 'SITE', 'DEVICE']:
             if col in df.columns:
                 ordered.append(col)
-        
+
         # 2. Base analyte columns (from self.analyte_dec_pls)
         for analyte in self.analyte_dec_pls.keys():
             if analyte in df.columns and analyte not in ordered:
                 ordered.append(analyte)
-        
+
         # 3. Aggregated stat columns (_min, _max, _count) - placed before Latitude/Longitude
         for analyte in self.analyte_dec_pls.keys():
             for suffix in ['_min', '_max', '_count']:
                 col = f"{analyte}{suffix}"
                 if col in df.columns and col not in ordered:
                     ordered.append(col)
-        
+
         # 4. Observations
         if 'observations' in df.columns:
             ordered.append('observations')
-        
+
         # 5. Coordinates
         for col in ['Latitude', 'Longitude']:
             if col in df.columns:
                 ordered.append(col)
-        
+
         # 6. INVALID_ columns
         for col in df.columns:
             if col.upper().startswith('INVALID_') and col not in ordered:
                 ordered.append(col)
-        
+
         # 7. Any remaining columns (catches anything we missed)
         for col in df.columns:
             if col not in ordered:
                 ordered.append(col)
-        
+
         return df[ordered]
 
     def _render(self):
@@ -262,10 +277,10 @@ class TableView(DataView):
         if self.model is None:
             self.model = PaginatedTableModel(dec_pls_dict=self.analyte_dec_pls, page_size=100)
             self.table_view.setModel(self.model)
-        
+
         # Reorder columns before passing to model
         reordered_data = self._reorder_columns(self.filtered_data)
-        
+
         # Use base class state
         show_invalid_bg = not self.filter_summary.get("only_valid", False)
         self.model.set_show_invalid_bg(show_invalid_bg)
@@ -282,36 +297,37 @@ class TableView(DataView):
             self.lbl_page_info.setText(f"Page {self.model.current_page + 1} of {self.model.total_pages}")
         else:
             self.lbl_page_info.setText("Page 0 of 0")
-            
+
         self.btn_prev_page.setEnabled(self.model.current_page > 0)
         self.btn_next_page.setEnabled(self.model.current_page < self.model.total_pages - 1)
-        
+
         header = self.table_view.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
-        
+
         if not hasattr(self.model, '_current_df') or self.model._current_df.empty:
             return
-            
+
         cols = list(self.model._current_df.columns)
         for i, col in enumerate(cols):
             if col.upper().startswith("INVALID_"):
                 self.table_view.setColumnHidden(i, True)
                 continue
-                
+
             self.table_view.setColumnHidden(i, False)
+
             if col == 'LOG TIME':
-                self.table_view.setColumnWidth(i, 160)
+                self.table_view.setColumnWidth(i, 190)      # Wider
             elif col == 'DEVICE':
                 self.table_view.setColumnWidth(i, 140)
             elif col == 'SITE':
-                self.table_view.setColumnWidth(i, 120)
+                self.table_view.setColumnWidth(i, 80)        # Narrower
             elif col == 'observations':
                 self.table_view.setColumnWidth(i, 250)
             elif col in self.analyte_dec_pls:
                 self.table_view.setColumnWidth(i, 80)
             else:
                 self.table_view.setColumnWidth(i, 100)
-                
+
         header.setStretchLastSection(True)
 
     def _on_next_page(self):
