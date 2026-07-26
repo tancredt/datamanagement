@@ -246,28 +246,60 @@ def read_spot_data(incident_path, start_time=None, stop_time=None, devices=None,
 
 
 # ==========================================
-# 4. SPECTRAL DATA (Reads from DB)
+# 4. SPECTRAL DATA (Reads from DB with Filters)
 # ==========================================
-def read_spectral_data(incident_path):
-    """Queries the spectral_result table and returns a standardized DataFrame."""
+def read_spectral_data(incident_path, start_time=None, stop_time=None,
+                       devices=None, sites=None):
+    """
+    Queries the spectral_result table and returns a standardized DataFrame.
+    Supports pre-filtering by time, devices, and sites.
+    """
     db = IncidentDatabase(incident_path)
-    spectral_results = db.get_spectral_results()
-    if not spectral_results:
+    query = """
+        SELECT m.label AS location, d.label AS device, sr.timestamp AS logtime,
+               sr.chemicals AS chemicals_identified, sr.comment AS comments,
+               sr.file_ref
+        FROM spectral_result sr
+        JOIN marker m ON sr.marker_id = m.id
+        LEFT JOIN device d ON sr.device_id = d.id
+        WHERE 1=1
+    """
+    params = []
+    if start_time:
+        query += " AND sr.timestamp >= ?"
+        params.append(str(start_time))
+    if stop_time:
+        query += " AND sr.timestamp <= ?"
+        params.append(str(stop_time))
+    if devices:
+        placeholders = ','.join(['?'] * len(devices))
+        query += f" AND d.label IN ({placeholders})"
+        params.extend(devices)
+    if sites:
+        placeholders = ','.join(['?'] * len(sites))
+        query += f" AND m.label IN ({placeholders})"
+        params.extend(sites)
+    query += " ORDER BY sr.timestamp DESC"
+
+    with db.get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+
+    if not rows:
         return pd.DataFrame()
 
-    rows = []
-    for r in spectral_results:
-        row = {
+    rows_out = []
+    for row in rows:
+        r = dict(row)
+        rows_out.append({
             "LOG TIME": r.get("logtime"),
             "DEVICE": r.get("device", ""),
             "SITE": r.get("location", "") or "Unassigned",
             "chemicals_identified": r.get("chemicals_identified", ""),
             "comments": r.get("comments", ""),
             "file_ref": r.get("file_ref", ""),
-        }
-        rows.append(row)
+        })
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows_out)
     if not df.empty and 'LOG TIME' in df.columns:
         df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
     return df
@@ -426,155 +458,5 @@ def read_battery_data(incident_path, device_label=None):
 # ==========================================
 # 6. OVERVIEW STATISTICS
 # ==========================================
-def get_data_summary(incident_path, data_type):
-    """
-    Returns summary statistics for a data type: count, date range, sites, analytes.
-    
-    Args:
-        incident_path: Path to the incident directory
-        data_type: One of 'area', 'spot', 'spectral', 'exposure', 'plume'
-    
-    Returns:
-        dict with keys: count, min_date, max_date, sites_count, analytes_count
-    """
-    db = IncidentDatabase(incident_path)
-    
-    with db.get_connection() as conn:
-        if data_type == "area":
-            count = conn.execute("SELECT COUNT(*) FROM area_reading").fetchone()[0]
-            min_max = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM area_reading").fetchone()
-            sites = conn.execute("SELECT COUNT(DISTINCT marker_id) FROM area_location").fetchone()[0]
-            analytes = conn.execute("SELECT COUNT(DISTINCT analyte_id) FROM area_reading_analyte").fetchone()[0]
-            
-        elif data_type == "spot":
-            count = conn.execute("SELECT COUNT(*) FROM spot_reading").fetchone()[0]
-            min_max = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM spot_reading").fetchone()
-            sites = conn.execute("SELECT COUNT(DISTINCT marker_id) FROM spot_reading").fetchone()[0]
-            analytes = conn.execute("SELECT COUNT(DISTINCT analyte_id) FROM spot_reading").fetchone()[0]
-            
-        elif data_type == "spectral":
-            count = conn.execute("SELECT COUNT(*) FROM spectral_result").fetchone()[0]
-            min_max = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM spectral_result").fetchone()
-            sites = None  # Not applicable
-            analytes = None  # Not applicable
-            
-        elif data_type == "exposure":
-            count = conn.execute("SELECT COUNT(*) FROM exposure").fetchone()[0]
-            min_max = conn.execute("SELECT MIN(start_dt), MAX(stop_dt) FROM exposure").fetchone()
-            sites = None  # Not applicable
-            analytes = conn.execute("SELECT COUNT(DISTINCT analyte_id) FROM exposure_reading").fetchone()[0]
-            
-        elif data_type == "plume":
-            count = conn.execute("SELECT COUNT(*) FROM plume").fetchone()[0]
-            min_max = conn.execute("SELECT MIN(model_dt), MAX(model_dt) FROM plume").fetchone()
-            sites = None  # Not applicable
-            analytes = None  # Not applicable
-            
-        else:
-            return {}
-    
-    return {
-        "count": count,
-        "min_date": min_max[0] if min_max else None,
-        "max_date": min_max[1] if min_max else None,
-        "sites_count": sites,
-        "analytes_count": analytes
-    }
 
 
-def get_recent_readings(incident_path, data_type, limit=5):
-    """
-    Returns the most recent readings for a data type.
-    
-    Args:
-        incident_path: Path to the incident directory
-        data_type: One of 'area', 'spot', 'spectral', 'exposure'
-        limit: Number of recent readings to return
-    
-    Returns:
-        list of dicts with reading data
-    """
-    db = IncidentDatabase(incident_path)
-    
-    with db.get_connection() as conn:
-        if data_type == "spot":
-            query = """
-                SELECT m.label AS site, d.label AS device, sr.timestamp AS logtime, 
-                       a.label AS analyte, sr.value
-                FROM spot_reading sr 
-                JOIN marker m ON sr.marker_id = m.id 
-                LEFT JOIN device d ON sr.device_id = d.id 
-                JOIN analyte a ON sr.analyte_id = a.id 
-                ORDER BY sr.timestamp DESC LIMIT ?
-            """
-            rows = conn.execute(query, (limit,)).fetchall()
-            return [dict(row) for row in rows]
-            
-        elif data_type == "area":
-            query = """
-                SELECT d.label AS device, ar.timestamp AS logtime, 
-                       a.label AS analyte, ara.value
-                FROM area_reading ar 
-                LEFT JOIN device d ON ar.device_id = d.id 
-                JOIN area_reading_analyte ara ON ar.id = ara.area_reading_id 
-                JOIN analyte a ON ara.analyte_id = a.id 
-                ORDER BY ar.timestamp DESC LIMIT ?
-            """
-            rows = conn.execute(query, (limit,)).fetchall()
-            return [dict(row) for row in rows]
-            
-        elif data_type == "exposure":
-            query = """
-                SELECT identifier, start_dt, stop_dt, area
-                FROM exposure 
-                ORDER BY start_dt DESC LIMIT ?
-            """
-            rows = conn.execute(query, (limit,)).fetchall()
-            return [dict(row) for row in rows]
-            
-        else:
-            return []
-
-
-def get_spectral_chemicals(incident_path):
-    """
-    Returns a list of unique chemicals identified in spectral results.
-    
-    Args:
-        incident_path: Path to the incident directory
-    
-    Returns:
-        list of chemical strings
-    """
-    db = IncidentDatabase(incident_path)
-    
-    with db.get_connection() as conn:
-        chems = conn.execute("""
-            SELECT DISTINCT chemicals 
-            FROM spectral_result 
-            WHERE chemicals IS NOT NULL AND chemicals != ''
-        """).fetchall()
-    
-    return [c[0] for c in chems]
-
-
-def get_plume_summary(incident_path):
-    """
-    Returns a list of plume records with file names and model datetimes.
-    
-    Args:
-        incident_path: Path to the incident directory
-    
-    Returns:
-        list of dicts with file_name and model_dt
-    """
-    db = IncidentDatabase(incident_path)
-    
-    with db.get_connection() as conn:
-        plumes = conn.execute("""
-            SELECT file_name, model_dt 
-            FROM plume 
-            ORDER BY model_dt DESC
-        """).fetchall()
-    
-    return [dict(row) for row in plumes]

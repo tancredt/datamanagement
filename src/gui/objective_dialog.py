@@ -99,9 +99,9 @@ class ObservationWidget(QWidget):
         self.form_combo.blockSignals(True)
         if data_type == "spectral":
             self.form_combo.clear()
-            self.form_combo.addItem("Table")
+            self.form_combo.addItems(["Table", "Summary Map"])
             self.form_combo.setCurrentText("Table")
-            self.form_combo.setEnabled(False)
+            self.form_combo.setEnabled(True)
         elif data_type == "exposure":
             self.form_combo.clear()
             self.form_combo.addItems(["Summary Table", "Summary Chart", "Table"])

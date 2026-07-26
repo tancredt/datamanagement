@@ -1,10 +1,13 @@
 import os
 import sys
+import logging
 import datetime
+import tempfile
 import pandas as pd
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton,
-    QMessageBox, QFileDialog, QScrollArea, QRadioButton, QButtonGroup, QStackedWidget, QSizePolicy
+    QMessageBox, QFileDialog, QScrollArea, QRadioButton, QButtonGroup,
+    QStackedWidget, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPixmap, QPainter, QPen
@@ -12,6 +15,8 @@ from PySide6.QtGui import QColor, QFont, QPixmap, QPainter, QPen
 # Import the new self-contained base class
 from base_view import DataView
 from datamanagement.db_manager import IncidentDatabase
+
+logger = logging.getLogger(__name__)
 
 
 class SummaryMapCanvas(QWidget):
@@ -36,7 +41,7 @@ class SummaryMapCanvas(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        
+
         if self.pixmap and not self.pixmap.isNull():
             painter.drawPixmap(0, 0, self.pixmap)
         else:
@@ -57,14 +62,22 @@ class SummaryMapCanvas(QWidget):
             # Draw marker circle
             painter.setPen(QPen(QColor("red"), 2))
             painter.setBrush(QColor("yellow"))
-            painter.drawEllipse(x-8, y-8, 16, 16)
+            painter.drawEllipse(x - 8, y - 8, 16, 16)
 
             # Draw text next to the marker
             painter.setPen(QPen(QColor("black"), 1))
             painter.setBrush(Qt.NoBrush)
             display_text = f"{label}: {text}" if text else f"{label}: N/A"
-            painter.drawText(x+12, y+5, display_text)
-            
+
+            # For spectral data, text may be long — wrap it across multiple lines
+            if '\n' in display_text:
+                y_offset = 0
+                for line in display_text.split('\n'):
+                    painter.drawText(x + 12, y + 5 + y_offset, line)
+                    y_offset += 14
+            else:
+                painter.drawText(x + 12, y + 5, display_text)
+
         painter.end()
 
 
@@ -72,19 +85,21 @@ class SummaryMapView(DataView):
     """
     Self-contained summary map view.
     Loads its own raw data, filters, configs, and map data from the database.
+    Supports area/spot/exposure (analyte-based) and spectral (chemical-list-based) data.
     """
-    def __init__(self, incident_path, data_type, map_filenames=None, mapping_dir=None, maps_data=None, parent=None):
+    def __init__(self, incident_path, data_type, map_filenames=None,
+                 mapping_dir=None, maps_data=None, parent=None):
         super().__init__(incident_path, data_type, parent)
-        
-        # ✅ Initialize Database Manager and fetch map data directly
+
+        # Initialize Database Manager and fetch map data directly
         self.db = IncidentDatabase(incident_path)
         self.mapping_dir = mapping_dir or os.path.join(incident_path, "mapping")
         self.map_filenames = self.db.get_maps()
         self.maps_data = self.db.get_maps_data()
-        
+
         self.plume_data = []
         self.current_plume_index = 0
-        
+
         self._setup_ui()
         self._render()
 
@@ -102,7 +117,7 @@ class SummaryMapView(DataView):
         normal_layout.setContentsMargins(0, 0, 0, 0)
 
         map_top_layout = QHBoxLayout()
-        
+
         # Map Selector
         map_top_layout.addWidget(QLabel("<b>Map:</b>"))
         self.summary_map_combo = QComboBox()
@@ -111,24 +126,23 @@ class SummaryMapView(DataView):
         self.summary_map_combo.currentTextChanged.connect(self._redraw)
         map_top_layout.addWidget(self.summary_map_combo)
 
-        # ✅ Analyte Selector (Populated from last_filters.json)
-        map_top_layout.addWidget(QLabel("<b>Analyte:</b>"))
+        # Analyte Selector (hidden for spectral data)
+        self.lbl_analyte = QLabel("<b>Analyte:</b>")
+        map_top_layout.addWidget(self.lbl_analyte)
         self.summary_map_analyte_combo = QComboBox()
         selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
         if not selected_analytes:
             selected_analytes = self.available_analytes
-        
-        # Ensure it's a list (safety net)
         if isinstance(selected_analytes, str):
             selected_analytes = [selected_analytes]
-            
         self.summary_map_analyte_combo.addItems(selected_analytes)
         self.summary_map_analyte_combo.setMinimumWidth(120)
         self.summary_map_analyte_combo.currentTextChanged.connect(self._redraw)
         map_top_layout.addWidget(self.summary_map_analyte_combo)
+
         map_top_layout.addStretch()
 
-        # Statistic Radio Buttons
+        # Statistic Radio Buttons (hidden for spectral data)
         self.summary_map_metric_group = QButtonGroup(self)
         self.rb_map_mean = QRadioButton("Mean")
         self.rb_map_max = QRadioButton("Max")
@@ -139,11 +153,21 @@ class SummaryMapView(DataView):
         self.summary_map_metric_group.addButton(self.rb_map_max, 1)
         self.summary_map_metric_group.addButton(self.rb_map_min, 2)
         self.summary_map_metric_group.addButton(self.rb_map_count, 3)
-        
+
+        self.lbl_metric = QLabel("<b>Statistic:</b>")
+        map_top_layout.addWidget(self.lbl_metric)
         map_top_layout.addWidget(self.rb_map_mean)
         map_top_layout.addWidget(self.rb_map_max)
         map_top_layout.addWidget(self.rb_map_min)
         map_top_layout.addWidget(self.rb_map_count)
+
+        # ✅ Hide analyte + metric controls for spectral data (they don't apply)
+        if self.data_type == "spectral":
+            for w in (self.lbl_analyte, self.summary_map_analyte_combo,
+                      self.lbl_metric, self.rb_map_mean, self.rb_map_max,
+                      self.rb_map_min, self.rb_map_count):
+                w.setVisible(False)
+
         normal_layout.addLayout(map_top_layout)
         self.summary_map_metric_group.idClicked.connect(self._redraw)
 
@@ -154,13 +178,13 @@ class SummaryMapView(DataView):
         map_scroll.setAlignment(Qt.AlignCenter)
         map_scroll.setWidget(self.summary_map_canvas)
         normal_layout.addWidget(map_scroll, stretch=1)
-        
+
         self.stack.addWidget(self.normal_page)
 
         # --- Page 1: Plume Slideshow View ---
         self.plume_page = QWidget()
         plume_layout = QVBoxLayout(self.plume_page)
-        
+
         self.plume_title_label = QLabel()
         self.plume_title_label.setAlignment(Qt.AlignCenter)
         self.plume_title_label.setStyleSheet("font-size: 18px; font-weight: bold; padding: 10px")
@@ -177,29 +201,30 @@ class SummaryMapView(DataView):
         self.btn_next_plume = QPushButton("Next ▶")
         self.btn_play_plume = QPushButton("▶ Play")
         self.btn_stop_plume = QPushButton("⏹ Stop")
-        
+
         btn_style = "QPushButton { padding: 6px 12px; font-weight: bold; }"
-        for btn in [self.btn_prev_plume, self.btn_next_plume, self.btn_play_plume, self.btn_stop_plume]:
+        for btn in [self.btn_prev_plume, self.btn_next_plume,
+                    self.btn_play_plume, self.btn_stop_plume]:
             btn.setStyleSheet(btn_style)
-            
+
         self.btn_prev_plume.clicked.connect(self._plume_previous)
         self.btn_next_plume.clicked.connect(self._plume_next)
         self.btn_play_plume.clicked.connect(self._plume_play)
         self.btn_stop_plume.clicked.connect(self._plume_stop)
         self.btn_stop_plume.setEnabled(False)
-        
+
         control_layout.addWidget(self.btn_prev_plume)
         control_layout.addWidget(self.btn_next_plume)
         control_layout.addStretch()
         control_layout.addWidget(self.btn_play_plume)
         control_layout.addWidget(self.btn_stop_plume)
         control_layout.addStretch()
-        
+
         self.plume_info_label = QLabel("No plume images loaded.")
         self.plume_info_label.setAlignment(Qt.AlignCenter)
         self.plume_info_label.setStyleSheet("font-size: 14px; font-weight: bold; padding: 8px;")
         control_layout.addWidget(self.plume_info_label)
-        
+
         plume_layout.addLayout(control_layout)
         self.stack.addWidget(self.plume_page)
 
@@ -225,13 +250,17 @@ class SummaryMapView(DataView):
 
         default_name = os.path.splitext(selected_map)[0] + "_summary.png"
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export Summary Map", default_name, "PNG Files (*.png);;JPEG Files (*.jpg);;All Files (*)"
+            self, "Export Summary Map", default_name,
+            "PNG Files (*.png);;JPEG Files (*.jpg);;All Files (*)"
         )
         if file_path:
             try:
                 pixmap = self.summary_map_canvas.grab()
                 if pixmap.save(file_path):
-                    QMessageBox.information(self, "Success", f"Summary map exported successfully to:\n{file_path}")
+                    QMessageBox.information(
+                        self, "Success",
+                        f"Summary map exported successfully to:\n{file_path}"
+                    )
                 else:
                     QMessageBox.critical(self, "Error", "Failed to save the summary map image.")
             except Exception as e:
@@ -241,36 +270,81 @@ class SummaryMapView(DataView):
         if not self.plume_data:
             QMessageBox.warning(self, "No Data", "No plume images loaded.")
             return
-            
+
         dt, filepath = self.plume_data[self.current_plume_index]
-        
-        # ✅ FIX: Safely get local time (handles both naive and aware datetimes correctly)
+
         try:
             local_dt = dt.astimezone()
         except Exception:
             local_dt = dt
-            
-        # ✅ Generate the default file name using the correct local time
+
         default_name = f"plume_{local_dt.strftime('%Y%m%d_%H%M')}.png"
-        
+
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export Plume Image", default_name, "PNG Files (*.png);;All Files (*)"
+            self, "Export Plume Image", default_name,
+            "PNG Files (*.png);;All Files (*)"
         )
         if file_path:
             try:
                 pixmap = self.plume_image_label.grab()
                 if pixmap.save(file_path):
-                    QMessageBox.information(self, "Success", f"Plume image exported successfully to:\n{file_path}")
+                    QMessageBox.information(
+                        self, "Success",
+                        f"Plume image exported successfully to:\n{file_path}"
+                    )
                 else:
                     QMessageBox.critical(self, "Error", "Failed to save the plume image.")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export plume image:\n{e}")
-                
+
+    def render_to_figure(self):
+        """
+        Renders the current canvas view to a matplotlib Figure for PDF export.
+        Grabs the visible QWidget as a QPixmap and embeds it in a matplotlib figure.
+        """
+        import matplotlib.pyplot as plt
+
+        # Make sure the widget is rendered
+        self.summary_map_canvas.repaint()
+        QApplication = None
+        try:
+            from PySide6.QtWidgets import QApplication as _QA
+            QApplication = _QA
+            QApplication.processEvents()
+        except Exception:
+            pass
+
+        # Grab the appropriate canvas depending on which page is visible
+        if self.stack.currentIndex() == 1:
+            source_widget = self.plume_image_label
+        else:
+            source_widget = self.summary_map_canvas
+
+        pixmap = source_widget.grab()
+
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp_path = tmp.name
+        pixmap.save(tmp_path, 'PNG')
+
+        fig = plt.figure(figsize=(8, 6))
+        try:
+            img = plt.imread(tmp_path)
+            ax = fig.add_axes([0.02, 0.02, 0.96, 0.96])
+            ax.imshow(img)
+            ax.axis('off')
+        finally:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+        return fig
+
     def _load_plumes_for_animation(self):
         """Loads plume data from DB or directory for the slideshow."""
         self.plume_data = []
         plumes_dir = os.path.join(self.incident_path, "plumes")
-        
+
         # Try DB first
         db_plumes = self.db.get_plumes()
         if db_plumes:
@@ -302,24 +376,24 @@ class SummaryMapView(DataView):
                             self.plume_data.append((dt, filepath))
                         except Exception:
                             pass
-        
+
         # Sort chronologically for the slideshow
         self.plume_data.sort(key=lambda x: x[0])
-                
+
     def _render(self):
         """Render the view with current filtered_data."""
         if self.data_type == "plume":
-            # ✅ FIX: Load plumes and start the animation
             self._load_plumes_for_animation()
             self.show_plume_animation(self.plume_data)
             return
-            
+
         self.map_filenames = self.db.get_maps()
         self.maps_data = self.db.get_maps_data()
 
         # Sync map combo box if filenames changed
         current_map = self.summary_map_combo.currentText()
-        map_items = [self.summary_map_combo.itemText(i) for i in range(self.summary_map_combo.count())]
+        map_items = [self.summary_map_combo.itemText(i)
+                     for i in range(self.summary_map_combo.count())]
         if list(self.map_filenames) != map_items:
             self.summary_map_combo.blockSignals(True)
             self.summary_map_combo.clear()
@@ -328,22 +402,26 @@ class SummaryMapView(DataView):
                 self.summary_map_combo.setCurrentText(current_map)
             self.summary_map_combo.blockSignals(False)
 
-        # ✅ Sync analyte combobox with current filter_summary (in case filters changed)
-        current_analyte = self.summary_map_analyte_combo.currentText()
-        selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
-        if not selected_analytes:
-            selected_analytes = self.available_analytes
-        if isinstance(selected_analytes, str):
-            selected_analytes = [selected_analytes]
+        # Sync analyte combobox with current filter_summary (only for non-spectral)
+        if self.data_type != "spectral":
+            current_analyte = self.summary_map_analyte_combo.currentText()
+            selected_analytes = self.filter_summary.get(
+                "selected_analytes", self.available_analytes
+            )
+            if not selected_analytes:
+                selected_analytes = self.available_analytes
+            if isinstance(selected_analytes, str):
+                selected_analytes = [selected_analytes]
 
-        current_items = [self.summary_map_analyte_combo.itemText(i) for i in range(self.summary_map_analyte_combo.count())]
-        if list(selected_analytes) != current_items:
-            self.summary_map_analyte_combo.blockSignals(True)
-            self.summary_map_analyte_combo.clear()
-            self.summary_map_analyte_combo.addItems(selected_analytes)
-            if current_analyte in selected_analytes:
-                self.summary_map_analyte_combo.setCurrentText(current_analyte)
-            self.summary_map_analyte_combo.blockSignals(False)
+            current_items = [self.summary_map_analyte_combo.itemText(i)
+                             for i in range(self.summary_map_analyte_combo.count())]
+            if list(selected_analytes) != current_items:
+                self.summary_map_analyte_combo.blockSignals(True)
+                self.summary_map_analyte_combo.clear()
+                self.summary_map_analyte_combo.addItems(selected_analytes)
+                if current_analyte in selected_analytes:
+                    self.summary_map_analyte_combo.setCurrentText(current_analyte)
+                self.summary_map_analyte_combo.blockSignals(False)
 
         self.show_normal_map()
         self._redraw()
@@ -384,13 +462,17 @@ class SummaryMapView(DataView):
 
         dt, filepath = self.plume_data[self.current_plume_index]
         local_time_str = dt.strftime('%Y-%m-%d %H:%M')
-        self.plume_title_label.setText(f"Air Dispersion Prediction for {local_time_str}")
+        self.plume_title_label.setText(
+            f"Air Dispersion Prediction for {local_time_str}"
+        )
 
         pixmap = QPixmap(filepath)
         if not pixmap.isNull():
             label_size = self.plume_image_label.size()
             if label_size.width() > 0 and label_size.height() > 0:
-                scaled_pixmap = pixmap.scaled(label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                scaled_pixmap = pixmap.scaled(
+                    label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
                 self.plume_image_label.setPixmap(scaled_pixmap)
             else:
                 self.plume_image_label.setPixmap(pixmap)
@@ -398,7 +480,8 @@ class SummaryMapView(DataView):
             self.plume_image_label.setText("Failed to load image")
 
         self.plume_info_label.setText(
-            f"Local Time: {dt.strftime('%Y-%m-%d %H:%M')} | Frame {self.current_plume_index + 1} of {len(self.plume_data)}"
+            f"Local Time: {dt.strftime('%Y-%m-%d %H:%M')} | "
+            f"Frame {self.current_plume_index + 1} of {len(self.plume_data)}"
         )
 
     def _plume_next(self):
@@ -429,13 +512,44 @@ class SummaryMapView(DataView):
         self.btn_play_plume.setEnabled(bool(self.plume_data))
         self.btn_stop_plume.setEnabled(False)
 
+    # ─────────────────────────────────────────────────────────
+    # REDRAW — branches between spectral and analyte-based rendering
+    # ─────────────────────────────────────────────────────────
     def _redraw(self):
         """Redraws the map overlay based on current filtered_data."""
         selected_map = self.summary_map_combo.currentText()
 
+        if not selected_map or selected_map not in self.maps_data:
+            self.summary_map_canvas.set_image(QPixmap())
+            self.summary_map_canvas.set_markers([])
+            return
+
+        pixmap_path = os.path.join(self.mapping_dir, selected_map)
+        if os.path.exists(pixmap_path):
+            self.summary_map_canvas.set_image(QPixmap(pixmap_path))
+        else:
+            self.summary_map_canvas.set_image(QPixmap())
+            self.summary_map_canvas.set_markers([])
+            return
+
+        # Branch based on data type
+        if self.data_type == "spectral":
+            markers_data = self._build_spectral_markers(selected_map)
+        else:
+            markers_data = self._build_analyte_markers(selected_map)
+
+        self.summary_map_canvas.set_markers(markers_data)
+
+    # ─────────────────────────────────────────────────────────
+    # Analyte-based rendering (area, spot, exposure)
+    # ─────────────────────────────────────────────────────────
+    def _build_analyte_markers(self, selected_map):
+        """Build marker data for analyte-based data types."""
         # Determine analyte and metric (Report vs Live UI)
         if hasattr(self, '_report_stats_pref'):
-            selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
+            selected_analytes = self.filter_summary.get(
+                "selected_analytes", self.available_analytes
+            )
             selected_analyte = selected_analytes[0] if selected_analytes else None
             metric_name = str(self._report_stats_pref).capitalize()
         else:
@@ -444,44 +558,45 @@ class SummaryMapView(DataView):
             metric_map = {0: 'Mean', 1: 'Max', 2: 'Min', 3: 'Count'}
             metric_name = metric_map.get(metric_id, 'Mean')
 
-        if not selected_analyte:
-            self.summary_map_canvas.set_markers([])
-            return
+        markers = self.maps_data.get(selected_map, [])
 
-        if selected_map and selected_map in self.maps_data:
-            pixmap_path = os.path.join(self.mapping_dir, selected_map)
-            if os.path.exists(pixmap_path):
-                self.summary_map_canvas.set_image(QPixmap(pixmap_path))
-            else:
-                self.summary_map_canvas.set_image(QPixmap())
-        else:
-            self.summary_map_canvas.set_image(QPixmap())
-            self.summary_map_canvas.set_markers([])
-            return
+        if not selected_analyte:
+            return [
+                {
+                    'x': m.get('x_coord', m.get('x', 0)),
+                    'y': m.get('y_coord', m.get('y', 0)),
+                    'label': str(m.get('label', '')).strip(),
+                    'text': 'N/A'
+                }
+                for m in markers
+            ]
 
         markers_data = []
-        markers = self.maps_data.get(selected_map, [])
-        
-        if (self.filtered_data is not None and 
-            not self.filtered_data.empty and 
-            'SITE' in self.filtered_data.columns and 
-            selected_analyte in self.filtered_data.columns):
-            
-            # ✅ FIX: Reverted to robust aggregation that works for BOTH raw and aggregated data
-            site_aggs = self.filtered_data.groupby('SITE')[selected_analyte].agg(['min', 'max', 'mean', 'count']).reset_index()
+
+        if (self.filtered_data is not None
+                and not self.filtered_data.empty
+                and 'SITE' in self.filtered_data.columns
+                and selected_analyte in self.filtered_data.columns):
+
+            # Robust aggregation that works for BOTH raw and aggregated data
+            site_aggs = (
+                self.filtered_data
+                .groupby('SITE')[selected_analyte]
+                .agg(['min', 'max', 'mean', 'count'])
+                .reset_index()
+            )
             site_aggs.columns = ['SITE', 'Min', 'Max', 'Mean', 'Count']
-            
+
             for m in markers:
                 label = str(m.get('label', '')).strip()
-                # ✅ Handle both DB keys (x_coord/y_coord) and legacy keys (x/y)
                 x = m.get('x_coord', m.get('x', 0))
                 y = m.get('y_coord', m.get('y', 0))
-                
-                # ✅ FIX: Strip whitespace from SITE column to ensure perfect matching with marker labels
-                site_row = site_aggs[site_aggs['SITE'].astype(str).str.strip() == label]
+
+                site_row = site_aggs[
+                    site_aggs['SITE'].astype(str).str.strip() == label
+                ]
                 if not site_row.empty:
                     val = site_row.iloc[0][metric_name]
-                    # Check for NaN before formatting to prevent "nan" strings
                     if pd.isna(val):
                         text = "N/A"
                     else:
@@ -492,18 +607,78 @@ class SummaryMapView(DataView):
                             text = f"{val:.{dec_pls}f}"
                 else:
                     text = "N/A"
+
                 markers_data.append({'x': x, 'y': y, 'label': label, 'text': text})
         else:
             for m in markers:
                 label = str(m.get('label', '')).strip()
-                # ✅ Handle both DB keys (x_coord/y_coord) and legacy keys (x/y)
                 x = m.get('x_coord', m.get('x', 0))
                 y = m.get('y_coord', m.get('y', 0))
                 markers_data.append({
-                    'x': x, 
-                    'y': y, 
-                    'label': label, 
-                    'text': 'N/A'
+                    'x': x, 'y': y, 'label': label, 'text': 'N/A'
                 })
 
-        self.summary_map_canvas.set_markers(markers_data)
+        return markers_data
+
+    # ─────────────────────────────────────────────────────────
+    # Spectral rendering — aggregates chemicals by site
+    # ─────────────────────────────────────────────────────────
+    def _build_spectral_markers(self, selected_map):
+        """
+        Build marker data for spectral results.
+        Aggregates all chemicals_identified values per site into a comma-delimited list.
+        """
+        markers = self.maps_data.get(selected_map, [])
+        markers_data = []
+
+        # Aggregate chemicals by site
+        site_chemicals = {}
+        if (self.filtered_data is not None
+                and not self.filtered_data.empty
+                and 'SITE' in self.filtered_data.columns
+                and 'chemicals_identified' in self.filtered_data.columns):
+
+            for _, row in self.filtered_data.iterrows():
+                site = str(row.get('SITE', '')).strip()
+                if not site or site.lower() in ('', 'unassigned', 'nan'):
+                    continue
+                chems_str = row.get('chemicals_identified', '')
+                if not chems_str or pd.isna(chems_str):
+                    continue
+                chems = [c.strip() for c in str(chems_str).split(',') if c.strip()]
+                if not chems:
+                    continue
+                if site not in site_chemicals:
+                    site_chemicals[site] = set()
+                site_chemicals[site].update(chems)
+
+        for m in markers:
+            label = str(m.get('label', '')).strip()
+            x = m.get('x_coord', m.get('x', 0))
+            y = m.get('y_coord', m.get('y', 0))
+
+            if label in site_chemicals:
+                # Build a multi-line text: chemicals as a comma-separated list
+                chems_list = sorted(site_chemicals[label])
+                chems_text = ', '.join(chems_list)
+                # Wrap long chemical lists across multiple lines for readability
+                if len(chems_text) > 40:
+                    lines = []
+                    current = ""
+                    for c in chems_list:
+                        if len(current) + len(c) + 2 > 40 and current:
+                            lines.append(current)
+                            current = c
+                        else:
+                            current = f"{current}, {c}" if current else c
+                    if current:
+                        lines.append(current)
+                    text = '\n'.join(lines)
+                else:
+                    text = chems_text
+            else:
+                text = "N/A"
+
+            markers_data.append({'x': x, 'y': y, 'label': label, 'text': text})
+
+        return markers_data

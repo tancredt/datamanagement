@@ -802,87 +802,104 @@ class IncidentDatabase:
             conn.execute("DELETE FROM plume WHERE file_name = ?", (file_name,))
             conn.commit()
 
-# ==========================================
-# 10. OVERVIEW & STATISTICS
-# ==========================================
-def get_data_time_range(self, data_type):
-    """
-    Returns the min and max timestamps for a data type.
-    
-    Args:
-        data_type: One of 'area', 'spot', 'spectral', 'exposure'
-    
-    Returns:
-        tuple (min_timestamp, max_timestamp) or (None, None) if no data
-    """
-    with self.get_connection() as conn:
-        if data_type == "area":
-            row = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM area_reading").fetchone()
-        elif data_type == "spot":
-            row = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM spot_reading").fetchone()
-        elif data_type == "exposure":
-            row = conn.execute("SELECT MIN(start_dt), MAX(start_dt) FROM exposure").fetchone()
-        elif data_type == "spectral":
-            row = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM spectral_result").fetchone()
-        else:
-            return None, None
+    # ==========================================
+    # 10. OVERVIEW & STATISTICS
+    # ==========================================
+    def get_data_time_range(self, data_type):
+        """
+        Returns the min and max timestamps for a data type.
         
-        if row and row[0] and row[1]:
-            return row[0], row[1]
+        Args:
+        data_type: One of 'area', 'spot', 'spectral', 'exposure'
+        
+        Returns:
+        tuple (min_timestamp, max_timestamp) or (None, None) if no data
+        """
+        with self.get_connection() as conn:
+            if data_type == "area":
+                row = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM area_reading").fetchone()
+            elif data_type == "spot":
+                row = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM spot_reading").fetchone()
+            elif data_type == "exposure":
+                row = conn.execute("SELECT MIN(start_dt), MAX(start_dt) FROM exposure").fetchone()
+            elif data_type == "spectral":
+                row = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM spectral_result").fetchone()
+            else:
+                return None, None
+        
+            if row and row[0] and row[1]:
+                return row[0], row[1]
         return None, None
 
 
-# ==========================================
-# 11. THRESHOLD MANAGEMENT
-# ==========================================
-def get_all_thresholds(self):
-    """
-    Returns a list of dicts with analyte thresholds.
-    
-    Returns:
+    # ==========================================
+    # 11. THRESHOLD MANAGEMENT
+    # ==========================================
+    def get_all_thresholds(self):
+        """
+        Returns a list of dicts with analyte thresholds.
+        
+        Returns:
         list of dicts: [{label, hotzone_threshold, warmzone_threshold, fireground_threshold, community_threshold}, ...]
-    """
-    with self.get_connection() as conn:
-        rows = conn.execute("""
+        """
+        with self.get_connection() as conn:
+            rows = conn.execute("""
             SELECT label, hotzone_threshold, warmzone_threshold, 
                    fireground_threshold, community_threshold 
             FROM analyte 
             ORDER BY label
-        """).fetchall()
-        return [dict(row) for row in rows]
+            """).fetchall()
+            return [dict(row) for row in rows]
 
-def update_thresholds(self, thresholds_list):
-    """
-    Updates thresholds for multiple analytes. Creates new analytes if they don't exist.
-    
-    Args:
+    def update_thresholds(self, thresholds_list):
+        """
+        Updates thresholds for multiple analytes. Creates new analytes if they don't exist.
+        
+        Args:
         thresholds_list: list of dicts with keys: label, hotzone, warmzone, fireground, community
-    """
-    with self.get_connection() as conn:
-        for t in thresholds_list:
-            label = t.get('label', '').strip()
-            if not label:
-                continue
+        """
+        with self.get_connection() as conn:
+            for t in thresholds_list:
+                label = t.get('label', '').strip()
+                if not label:
+                    continue
             
-            hotzone = float(t.get('hotzone', 0.0))
-            warmzone = float(t.get('warmzone', 0.0))
-            fireground = float(t.get('fireground', 0.0))
-            community = float(t.get('community', 0.0))
+                hotzone = float(t.get('hotzone', 0.0))
+                warmzone = float(t.get('warmzone', 0.0))
+                fireground = float(t.get('fireground', 0.0))
+                community = float(t.get('community', 0.0))
             
-            # Check if analyte exists
-            exists = conn.execute("SELECT 1 FROM analyte WHERE label = ?", (label,)).fetchone()
+                # Check if analyte exists
+                exists = conn.execute("SELECT 1 FROM analyte WHERE label = ?", (label,)).fetchone()
             
-            if not exists:
-                # Insert new analyte with default dec_pls=2
-                conn.execute("""
+                if not exists:
+                    # Insert new analyte with default dec_pls=2
+                    conn.execute("""
                     INSERT INTO analyte (label, dec_pls, hotzone_threshold, warmzone_threshold, fireground_threshold, community_threshold)
                     VALUES (?, 2, ?, ?, ?, ?)
-                """, (label, hotzone, warmzone, fireground, community))
-            else:
-                conn.execute("""
+                    """, (label, hotzone, warmzone, fireground, community))
+                else:
+                    conn.execute("""
                     UPDATE analyte 
                     SET hotzone_threshold=?, warmzone_threshold=?, fireground_threshold=?, community_threshold=?
                     WHERE label=?
-                """, (hotzone, warmzone, fireground, community, label))
-        
-        conn.commit()
+                    """, (hotzone, warmzone, fireground, community, label))
+                    
+                    conn.commit()
+
+    def get_last_area_readings(self):
+        """
+        Returns the last reading timestamp for each device in the area_reading table.
+    
+        Returns:
+        list of dicts: [{device, last_reading}, ...]
+        """
+        with self.get_connection() as conn:
+            rows = conn.execute("""
+            SELECT d.label AS device, MAX(ar.timestamp) AS last_reading
+            FROM area_reading ar
+            LEFT JOIN device d ON ar.device_id = d.id
+            GROUP BY ar.device_id
+            ORDER BY last_reading DESC
+            """).fetchall()
+            return [dict(row) for row in rows]

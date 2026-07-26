@@ -34,6 +34,7 @@ DEVICE_KEY_MAP = {
 
 class FilterGroup(QGroupBox):
     """A group box containing checkboxes for filtering."""
+
     def __init__(self, title, parent=None):
         super().__init__(f"{title}:", parent)
         layout = QVBoxLayout(self)
@@ -114,19 +115,20 @@ class FilterGroup(QGroupBox):
 
 class FilterDialog(QDialog):
     """Main dialog for filtering data by time, site, device, and analyte."""
+
     def __init__(
         self,
         parent=None,
         incident_path=None,
         data_type="spot",
-        mode="view",  # "view" or "objective"
+        mode="view",       # "view" or "objective"
         initial_filters=None,
         plume_data=None,
     ):
         super().__init__(parent)
         self.incident_path = incident_path
         self.data_type = data_type
-        self.mode = mode  # "view" saves to disk, "objective" doesn't
+        self.mode = mode   # "view" saves to disk, "objective" doesn't
         self.plume_data = plume_data or []
 
         # Determine initial filters based on mode
@@ -144,11 +146,10 @@ class FilterDialog(QDialog):
         # Load metadata from Database
         self.analyte_dec_pls = self._load_analyte_dec_pls()
         self.thresholds_lookup = self._load_thresholds_lookup()
-        
         self.available_devices = self.db.get_devices(self.data_type) if self.db else []
         self.available_locations = self.db.get_markers() if self.db else []
         self.available_analytes = list(self.analyte_dec_pls.keys())
-        
+
         self._selected_threshold_level = None
 
         # Build UI
@@ -170,7 +171,7 @@ class FilterDialog(QDialog):
         try:
             with open(filters_file, 'r', encoding='utf-8') as f:
                 raw = json.load(f)
-            
+
             def clean(obj):
                 if isinstance(obj, dict):
                     return {k.strip(): clean(v) for k, v in obj.items()}
@@ -179,7 +180,7 @@ class FilterDialog(QDialog):
                 elif isinstance(obj, str):
                     return obj.strip()
                 return obj
-            
+
             raw = clean(raw)
             for key in ("start_time", "stop_time"):
                 val = raw.get(key)
@@ -259,8 +260,8 @@ class FilterDialog(QDialog):
         self.threshold_combo.setCurrentText("No Threshold")
         self.threshold_combo.setMinimumWidth(140)
         top_row.addWidget(self.threshold_combo)
-
         top_row.addStretch()
+
         self.lbl_stats_pref = QLabel("<b>Stats Pref:</b>")
         top_row.addWidget(self.lbl_stats_pref)
         self.stats_pref_combo = QComboBox()
@@ -269,6 +270,7 @@ class FilterDialog(QDialog):
         self.stats_pref_combo.setMinimumWidth(100)
         top_row.addWidget(self.stats_pref_combo)
 
+        # Initial visibility (refined further by _apply_data_type_constraints)
         if self.mode != "objective":
             self.lbl_stats_pref.setVisible(False)
             self.stats_pref_combo.setVisible(False)
@@ -282,19 +284,16 @@ class FilterDialog(QDialog):
         self.start_time_edit.setCalendarPopup(True)
         self.start_time_edit.setDisplayFormat(DATE_FORMAT)
         time_interval_row.addWidget(self.start_time_edit)
-
         time_interval_row.addWidget(QLabel("Stop Time:"))
         self.stop_time_edit = QDateTimeEdit()
         self.stop_time_edit.setCalendarPopup(True)
         self.stop_time_edit.setDisplayFormat(DATE_FORMAT)
         time_interval_row.addWidget(self.stop_time_edit)
-
         time_interval_row.addWidget(QLabel("Interval:"))
         self.interval_combo = QComboBox()
         self.interval_combo.addItems(INTERVAL_OPTIONS)
         self.interval_combo.setCurrentText("Raw")
         time_interval_row.addWidget(self.interval_combo)
-
         self.only_valid_cb = QCheckBox("Only Valid")
         time_interval_row.addWidget(self.only_valid_cb)
         time_interval_row.addStretch()
@@ -318,7 +317,6 @@ class FilterDialog(QDialog):
         self.btn_apply.setMinimumWidth(120)
         self.btn_apply.clicked.connect(self._apply_filters)
         btn_row.addWidget(self.btn_apply)
-
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setMinimumHeight(32)
         self.btn_cancel.clicked.connect(self.reject)
@@ -331,13 +329,14 @@ class FilterDialog(QDialog):
     def _apply_data_type_constraints(self):
         """Enable/disable controls based on the current data type."""
         if self.data_type == "spectral":
-            self.group_by_combo.setEnabled(False)
+            # ✅ Enable Group By and Site filtering for spectral
+            self.group_by_combo.setEnabled(True)
             self.threshold_combo.setEnabled(False)
             self.threshold_combo.setCurrentText("No Threshold")
             self.interval_combo.setEnabled(False)
             self.only_valid_cb.setEnabled(False)
-            self.site_group.set_enabled(False)
-            self.device_group.set_enabled(False)
+            # Let the group-by handler manage site/device enable states
+            self._on_group_by_changed(self.group_by_combo.currentText())
             self.analyte_group.setVisible(False)
             self.analyte_group.setEnabled(False)
         elif self.data_type == "exposure":
@@ -366,6 +365,15 @@ class FilterDialog(QDialog):
             self.analyte_group.set_enabled(False)
             self.analyte_group.setVisible(False)
 
+        # ✅ Stats Pref visibility:
+        #    Only show in objective mode AND not for spectral/plume
+        show_stats_pref = (
+            self.mode == "objective"
+            and self.data_type not in ("spectral", "plume")
+        )
+        self.lbl_stats_pref.setVisible(show_stats_pref)
+        self.stats_pref_combo.setVisible(show_stats_pref)
+
     def _on_group_by_changed(self, group_by_text):
         if group_by_text == "Identifier":
             self.site_group.set_enabled(False)
@@ -382,15 +390,14 @@ class FilterDialog(QDialog):
         for device in self.available_devices:
             self.device_group.add_checkbox(device, checked=True)
 
-        # Sites / Areas
-        if self.data_type != "spectral":
-            self.site_group.clear()
-            if self.data_type != "exposure":
-                self.site_group.add_checkbox("Unassigned", checked=True)
-            for loc in self.available_locations:
-                self.site_group.add_checkbox(loc, checked=True)
+        # ✅ Sites / Areas - now applies to ALL data types including spectral
+        self.site_group.clear()
+        if self.data_type != "exposure":
+            self.site_group.add_checkbox("Unassigned", checked=True)
+        for loc in self.available_locations:
+            self.site_group.add_checkbox(loc, checked=True)
 
-        # Analytes
+        # Analytes (still excluded for spectral)
         if self.data_type != "spectral":
             self.analyte_group.clear()
             for analyte in self.available_analytes:
@@ -421,7 +428,7 @@ class FilterDialog(QDialog):
                     dt = QDateTime.fromString(stop, DATE_FORMAT)
                     if dt.isValid():
                         self.stop_time_edit.setDateTime(dt)
-            return 
+            return
 
         start = self.initial_filters.get("start_time")
         if start:
@@ -431,6 +438,7 @@ class FilterDialog(QDialog):
                 dt = QDateTime.fromString(start, DATE_FORMAT)
                 if dt.isValid():
                     self.start_time_edit.setDateTime(dt)
+
         stop = self.initial_filters.get("stop_time")
         if stop:
             if isinstance(stop, datetime):
@@ -473,7 +481,9 @@ class FilterDialog(QDialog):
         if devices:
             self.device_group.set_checked_items(devices)
 
-        if self.data_type != "spectral" and "selected_sites" in self.initial_filters:
+        # ✅ Removed the `self.data_type != "spectral"` guard so spectral
+        #    can also restore saved site filters.
+        if "selected_sites" in self.initial_filters:
             self.site_group.set_checked_items(
                 self.initial_filters["selected_sites"]
             )
@@ -525,6 +535,7 @@ class FilterDialog(QDialog):
 
         if self.mode == "view":
             self._save_filters_to_disk()
+
         self.accept()
 
     def _save_filters_to_disk(self):
@@ -577,6 +588,7 @@ class FilterDialog(QDialog):
             interval = "Raw"
 
         device_key = DEVICE_KEY_MAP.get(self.data_type, "selected_area_devices")
+
         return {
             "start_time": self.start_time_edit.dateTime().toPython(),
             "stop_time": self.stop_time_edit.dateTime().toPython(),

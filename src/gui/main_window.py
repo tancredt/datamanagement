@@ -31,6 +31,7 @@ from objective_dialog import ObjectiveDialog
 from spectral_results_dialog import SpectralResultsDialog
 from preferences_dialog import PreferencesDialog
 from plume_dialog import PlumeDialog
+from last_readings_dialog import LastReadingsDialog
 
 # New self-contained data view components
 from table_view import TableView
@@ -57,7 +58,7 @@ logger = logging.getLogger(__name__)
 VIEW_CONSTRAINTS = {
     "spot":     {"enabled": [0, 1, 2, 3, 4], "default": 0},
     "area":     {"enabled": [0, 1, 2, 3, 4], "default": 0},
-    "spectral": {"enabled": [0],             "default": 0},
+    "spectral": {"enabled": [0, 4],             "default": 0},
     "exposure": {"enabled": [2, 3],          "default": 2},
     "plume":    {"enabled": [4],             "default": 4}
 }
@@ -351,7 +352,8 @@ class DataAnalyzerGUI(QMainWindow):
         self.action_device_locations = area_menu.addAction("Device &Locations...", self._on_device_locations)
         self.action_device_validations = area_menu.addAction("Device &Validations...", self._on_device_validations)
         self.action_battery = area_menu.addAction("&Battery...", self._on_battery_analysis)
-
+        self.action_last_readings = area_menu.addAction("&Last Readings...", self._on_last_readings) 
+        
         spectral_menu = data_menu.addMenu("&Spectral Results")
         self.action_spectral_results = spectral_menu.addAction("&Results...", self._on_spectral_results)
 
@@ -869,6 +871,11 @@ class DataAnalyzerGUI(QMainWindow):
             return
         BatteryAnalysisDialog(self, self.active_incident_path).exec()
 
+    @Slot()
+    def _on_last_readings(self):
+        dialog = LastReadingsDialog(parent=self, incident_path=self.active_incident_path)
+        dialog.exec()
+        
     @Slot()
     def _show_overview(self):
         """Loads the Overview grid into the central view stack."""

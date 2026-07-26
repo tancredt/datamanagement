@@ -424,7 +424,6 @@ def generate_pdf_report(incident_path, parent_widget=None):
                     summary_str = " | ".join(summary_parts)
 
                     if data_type == 'exposure' and form not in ['Summary Table', 'Summary Chart', 'Table']: continue
-                    # ✅ FIXED: Allow spectral to use Summary Map
                     if data_type == 'spectral' and form not in ['Table', 'Summary Map']: continue
                     if data_type == 'plume' and form != 'Summary Map': continue
 
@@ -450,7 +449,7 @@ def generate_pdf_report(incident_path, parent_widget=None):
                             story.append(_make_image_flowable(tmp_path))
                             temp_files.append(tmp_path)
                             
-                        elif form == 'Summary Chart' and data_type not in ['spectral', 'plume']:
+                        elif form == 'Summary Chart' and data_type != 'plume':
                             view = SummaryChartView(incident_path=incident_path, data_type=data_type)
                             view.set_filter_summary(filter_data_dict)
                             view._report_stats_pref = filter_data_dict.get("stats_pref", "Mean")
@@ -492,20 +491,21 @@ def generate_pdf_report(incident_path, parent_widget=None):
                                         story.append(Spacer(1, 0.1*inch))
                                         story.append(_make_image_flowable(filepath))
                                         story.append(Spacer(1, 0.2*inch))
-                            # ✅ FIXED: Allow spectral and exposure to use Summary Map
-                            elif data_type != 'exposure':
-                                view = SummaryMapView(incident_path=incident_path, data_type=data_type, map_filenames=list(maps_data.keys()), mapping_dir=mapping_dir, maps_data=maps_data)
-                                view.set_filter_summary(filter_data_dict)
-                                view._report_stats_pref = filter_data_dict.get("stats_pref", "Mean")
-                                view._render()
-                                fig = view.render_to_figure()
-                                tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-                                tmp_path = tmp.name
-                                tmp.close()
-                                fig.savefig(tmp_path, bbox_inches='tight', dpi=150)
-                                plt.close(fig)
-                                story.append(_make_image_flowable(tmp_path))
-                                temp_files.append(tmp_path)
+                            elif data_type not in ['exposure']:
+    view = SummaryMapView(incident_path=incident_path, data_type=data_type,
+                          map_filenames=list(maps_data.keys()),
+                          mapping_dir=mapping_dir, maps_data=maps_data)
+    view.set_filter_summary(filter_data_dict)
+    view._report_stats_pref = filter_data_dict.get("stats_pref", "Mean")
+    view._render()
+    fig = view.render_to_figure()
+    tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    fig.savefig(tmp_path, bbox_inches='tight', dpi=150)
+    plt.close(fig)
+    story.append(_make_image_flowable(tmp_path))
+    temp_files.append(tmp_path)
                     except Exception as e:
                         logger.error(f"Failed to render view for observation: {e}")
                         add_observation_header(data_type, summary_str)

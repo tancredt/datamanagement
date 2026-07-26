@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import logging
 
+from datamanagement.db_manager import IncidentDatabase
+
 logger = logging.getLogger(__name__)
 
 # ==========================================
@@ -194,3 +196,166 @@ def summarise_data(df):
         })
         
     return summary
+
+def get_spectral_chemicals(incident_path):
+    """
+    Returns a sorted list of unique individual chemical names identified in spectral results.
+    Each spectral result's 'chemicals' field is a comma-delimited string, so we split,
+    strip whitespace, and deduplicate to get the final unique list.
+    
+    Args:
+        incident_path: Path to the incident directory
+    
+    Returns:
+        sorted list of unique chemical name strings
+    """
+    db = IncidentDatabase(incident_path)
+    with db.get_connection() as conn:
+        chems = conn.execute("""
+            SELECT DISTINCT chemicals 
+            FROM spectral_result 
+            WHERE chemicals IS NOT NULL AND chemicals != ''
+        """).fetchall()
+    
+    unique_chemicals = set()
+    for row in chems:
+        chem_string = row[0]
+        if not chem_string:
+            continue
+        # Split the comma-delimited string into individual chemicals
+        for chem in chem_string.split(','):
+            cleaned = chem.strip()
+            if cleaned:
+                unique_chemicals.add(cleaned)
+    
+    return sorted(unique_chemicals)
+
+
+def get_plume_summary(incident_path):
+    """
+    Returns a list of plume records with file names and model datetimes.
+    
+    Args:
+        incident_path: Path to the incident directory
+    
+    Returns:
+        list of dicts with file_name and model_dt
+    """
+    db = IncidentDatabase(incident_path)
+    
+    with db.get_connection() as conn:
+        plumes = conn.execute("""
+            SELECT file_name, model_dt 
+            FROM plume 
+            ORDER BY model_dt DESC
+        """).fetchall()
+    
+    return [dict(row) for row in plumes]
+def get_recent_readings(incident_path, data_type, limit=5):
+    """
+    Returns the most recent readings for a data type.
+    
+    Args:
+        incident_path: Path to the incident directory
+        data_type: One of 'area', 'spot', 'spectral', 'exposure'
+        limit: Number of recent readings to return
+    
+    Returns:
+        list of dicts with reading data
+    """
+    db = IncidentDatabase(incident_path)
+    
+    with db.get_connection() as conn:
+        if data_type == "spot":
+            query = """
+                SELECT m.label AS site, d.label AS device, sr.timestamp AS logtime, 
+                       a.label AS analyte, sr.value
+                FROM spot_reading sr 
+                JOIN marker m ON sr.marker_id = m.id 
+                LEFT JOIN device d ON sr.device_id = d.id 
+                JOIN analyte a ON sr.analyte_id = a.id 
+                ORDER BY sr.timestamp DESC LIMIT ?
+            """
+            rows = conn.execute(query, (limit,)).fetchall()
+            return [dict(row) for row in rows]
+            
+        elif data_type == "area":
+            query = """
+                SELECT d.label AS device, ar.timestamp AS logtime, 
+                       a.label AS analyte, ara.value
+                FROM area_reading ar 
+                LEFT JOIN device d ON ar.device_id = d.id 
+                JOIN area_reading_analyte ara ON ar.id = ara.area_reading_id 
+                JOIN analyte a ON ara.analyte_id = a.id 
+                ORDER BY ar.timestamp DESC LIMIT ?
+            """
+            rows = conn.execute(query, (limit,)).fetchall()
+            return [dict(row) for row in rows]
+            
+        elif data_type == "exposure":
+            query = """
+                SELECT identifier, start_dt, stop_dt, area
+                FROM exposure 
+                ORDER BY start_dt DESC LIMIT ?
+            """
+            rows = conn.execute(query, (limit,)).fetchall()
+            return [dict(row) for row in rows]
+            
+        else:
+            return []
+
+def get_data_overview(incident_path, data_type):
+    """
+    Returns summary statistics for a data type: count, date range, sites, analytes.
+    
+    Args:
+        incident_path: Path to the incident directory
+        data_type: One of 'area', 'spot', 'spectral', 'exposure', 'plume'
+    
+    Returns:
+        dict with keys: count, min_date, max_date, sites_count, analytes_count
+    """
+    db = IncidentDatabase(incident_path)
+    
+    with db.get_connection() as conn:
+        if data_type == "area":
+            count = conn.execute("SELECT COUNT(*) FROM area_reading").fetchone()[0]
+            min_max = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM area_reading").fetchone()
+            sites = conn.execute("SELECT COUNT(DISTINCT marker_id) FROM area_location").fetchone()[0]
+            analytes = conn.execute("SELECT COUNT(DISTINCT analyte_id) FROM area_reading_analyte").fetchone()[0]
+            
+        elif data_type == "spot":
+            count = conn.execute("SELECT COUNT(*) FROM spot_reading").fetchone()[0]
+            min_max = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM spot_reading").fetchone()
+            sites = conn.execute("SELECT COUNT(DISTINCT marker_id) FROM spot_reading").fetchone()[0]
+            analytes = conn.execute("SELECT COUNT(DISTINCT analyte_id) FROM spot_reading").fetchone()[0]
+            
+        elif data_type == "spectral":
+            count = conn.execute("SELECT COUNT(*) FROM spectral_result").fetchone()[0]
+            min_max = conn.execute("SELECT MIN(timestamp), MAX(timestamp) FROM spectral_result").fetchone()
+            sites = None  # Not applicable
+            analytes = None  # Not applicable
+            
+        elif data_type == "exposure":
+            count = conn.execute("SELECT COUNT(*) FROM exposure").fetchone()[0]
+            min_max = conn.execute("SELECT MIN(start_dt), MAX(stop_dt) FROM exposure").fetchone()
+            sites = None  # Not applicable
+            analytes = conn.execute("SELECT COUNT(DISTINCT analyte_id) FROM exposure_reading").fetchone()[0]
+            
+        elif data_type == "plume":
+            count = conn.execute("SELECT COUNT(*) FROM plume").fetchone()[0]
+            min_max = conn.execute("SELECT MIN(model_dt), MAX(model_dt) FROM plume").fetchone()
+            sites = None  # Not applicable
+            analytes = None  # Not applicable
+            
+        else:
+            return {}
+    
+    return {
+        "count": count,
+        "min_date": min_max[0] if min_max else None,
+        "max_date": min_max[1] if min_max else None,
+        "sites_count": sites,
+        "analytes_count": analytes
+    }
+
