@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QMessageBox, QComboBox, QPushButton
 )
 from PySide6.QtCore import Qt
-from datamanagement.choices import get_available_devices
+from datamanagement.db_manager import IncidentDatabase
 
 class GPSAnalysisDialog(QDialog):
     def __init__(self, parent=None, incident_path=None):
@@ -25,7 +25,10 @@ class GPSAnalysisDialog(QDialog):
         else:
             self.csv_path = "testdata.csv"
             self.area_locations_json = None
-            
+        
+        # ✅ Initialize database manager for device lookups
+        self.db = IncidentDatabase(incident_path) if incident_path else None
+        
         self.setWindowTitle("GPS Analyzer")
         self.resize(1000, 800)
         self.init_ui()
@@ -39,7 +42,8 @@ class GPSAnalysisDialog(QDialog):
         ctrl_layout.addWidget(QLabel("<b>Select Device:</b>"))
         self.cmb_device = QComboBox()
         self.cmb_device.setEditable(True)
-        self.cmb_device.addItems(get_available_devices(self.incident_path, data_type="area"))
+        if self.db:
+            self.cmb_device.addItems(self.db.get_devices("area"))
         ctrl_layout.addWidget(self.cmb_device)
         
         self.btn_analyze = QPushButton("Analyze")

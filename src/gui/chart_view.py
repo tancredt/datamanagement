@@ -22,13 +22,14 @@ class ChartView(DataView):
         self._render()
 
     def _setup_ui(self):
-         layout = QVBoxLayout(self)
-         layout.setContentsMargins(0, 0, 0, 0)
-         self.figure, self.ax = plt.subplots(figsize=(8, 4))
-         self.canvas = FigureCanvas(self.figure)
-         self.toolbar = NavigationToolbar(self.canvas, self)
-         layout.addWidget(self.toolbar)
-         layout.addWidget(self.canvas, stretch=1)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.figure, self.ax = plt.subplots(figsize=(8, 4))
+        self.figure.set_tight_layout(True)  # ✅ Handle tight layout automatically
+        self.canvas = FigureCanvas(self.figure)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.canvas, stretch=1)
          
     def render_to_figure(self):
         """Returns the existing Matplotlib figure directly."""
@@ -165,7 +166,7 @@ class ChartView(DataView):
             
         self.ax.legend(loc='best', fontsize='small')
         self.ax.grid(True, linestyle='--', alpha=0.6)
-        self.figure.tight_layout()
+        
         self.canvas.draw()
 
     def update_data(self, *args, **kwargs):

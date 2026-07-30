@@ -395,7 +395,7 @@ class MapEditorDialog(QDialog):
         current_map_labels = {m['label'] for m in db_markers}
         
         # Get the next available global label for the default suggestion
-        next_label = self.db.get_next_label()
+        next_label = self.db.get_next_marker_label()
         
         dialog = MarkerInfoDialog(self, default_label=next_label, current_map_labels=current_map_labels)
         if dialog.exec() == QDialog.Accepted:

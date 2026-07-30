@@ -280,7 +280,6 @@ class DataView(QWidget):
         # plume doesn't use raw_data
         
         self.filtered_data = self.raw_data
-        print(self.filtered_data)
     def _apply_aggregation(self):
         """Apply time-interval aggregation to the already-filtered data."""
         if self.data_type == "plume":

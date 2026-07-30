@@ -27,11 +27,11 @@ from spot_readings_dialog import SpotReadingsDialog
 from device_locations_dialog import DeviceLocationsDialog
 from device_validations_dialog import DeviceValidationsDialog
 from battery_analysis_dialog import BatteryAnalysisDialog
-from objective_dialog import ObjectiveDialog
 from spectral_results_dialog import SpectralResultsDialog
 from preferences_dialog import PreferencesDialog
 from plume_dialog import PlumeDialog
 from last_readings_dialog import LastReadingsDialog
+from objectives_manager_dialog import ObjectivesManagerDialog
 
 # New self-contained data view components
 from table_view import TableView
@@ -46,8 +46,7 @@ from thresholds_dialog import ThresholdsDialog
 
 # Importer workers
 from datamanagement.importer import copy_files_to_realtime, import_area_data
-from datamanagement.updater import update_site_from_device_locations, update_validations
-from datamanagement.locations import LocationManager
+from datamanagement.updater import sync_all  # ✅ REPLACED OLD IMPORTS
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +91,7 @@ class CopyWorker(QObject):
 
 
 class ProcessWorker(QObject):
-    finished = Signal(str)
+    finished = Signal(int)
     error = Signal(str)
 
     def __init__(self, incident_path):
@@ -102,14 +101,16 @@ class ProcessWorker(QObject):
     @Slot()
     def do_work(self):
         try:
-            result = import_area_data(self.incident_path)
-            if result:
-                update_site_from_device_locations(self.incident_path)
-                update_validations(self.incident_path)
-            self.finished.emit(result if result else "")
+            # 1. Import raw CSVs into DB (Returns row count)
+            row_count = import_area_data(self.incident_path)
+            
+            # 2. Sync the relational IDs based on locations and invalidations
+            if row_count > 0:
+                sync_all(self.incident_path)
+                
+            self.finished.emit(row_count if row_count is not None else 0)
         except Exception as e:
             self.error.emit(str(e))
-
 
 class DataAnalyzerGUI(QMainWindow):
     def __init__(self):
@@ -162,11 +163,13 @@ class DataAnalyzerGUI(QMainWindow):
             self.action_edit_incident, self.action_preferences,
             self.action_maps, self.action_spot_readings,
             self.action_import_area, self.action_device_locations,
-            self.action_device_validations, self.action_battery, self.action_hotzone,
-            self.action_warmzone, self.action_fireground, self.action_community,
-            self.action_thresholds, self.action_clear_objectives,
+            self.action_device_validations, self.action_battery,
+            self.action_thresholds,
             self.action_publish, self.action_spectral_results,
-            self.action_exposures, self.action_plumes
+            self.action_exposures, self.action_plumes,
+            self.action_thresholds,
+            self.action_publish, self.action_spectral_results,
+            self.action_exposures, self.action_plumes,
         ]
         for action in actions:
             action.setEnabled(has_incident)
@@ -338,6 +341,7 @@ class DataAnalyzerGUI(QMainWindow):
         edit_menu = menubar.addMenu("&Edit")
         self.action_preferences = edit_menu.addAction("&Preferences...", self._on_preferences)
         self.action_preferences.setShortcut(QKeySequence("Ctrl+,"))
+        self.action_thresholds = edit_menu.addAction("&Thresholds...", self._on_manage_thresholds)
         
         # ── Combined Data Menu ──
         data_menu = menubar.addMenu("&Data")
@@ -365,19 +369,13 @@ class DataAnalyzerGUI(QMainWindow):
         exposure_menu = data_menu.addMenu("E&xposures")
         self.action_exposures = exposure_menu.addAction("&Exposures...", self._on_exposures)
         
-        # ✅ Replaced the plumes_menu submenu with a single action
         self.action_plumes = data_menu.addAction("&Plumes...", self._on_plumes)
         
         # ── Reports Menu ──
         reports_menu = menubar.addMenu("&Reports")
-        self.action_hotzone = reports_menu.addAction("&Hotzone", self._on_report_hotzone)
-        self.action_warmzone = reports_menu.addAction("&Warmzone", self._on_report_warmzone)
-        self.action_fireground = reports_menu.addAction("&Fireground", self._on_report_fireground)
-        self.action_community = reports_menu.addAction("&Community", self._on_report_community)
-        reports_menu.addSeparator()
-        self.action_thresholds = reports_menu.addAction("&Thresholds...", self._on_manage_thresholds)
-        reports_menu.addSeparator()
-        self.action_clear_objectives = reports_menu.addAction("Clear &Objectives...", self._on_clear_objectives)
+        
+        self.action_manage_objectives = reports_menu.addAction("&Objectives...", self._on_manage_objectives)
+        
         reports_menu.addSeparator()
         self.action_publish = reports_menu.addAction("&Publish")
         self.action_publish.triggered.connect(self._on_report_publish)
@@ -579,25 +577,14 @@ class DataAnalyzerGUI(QMainWindow):
         elif index == 3:
             view = SummaryChartView(incident_path=self.active_incident_path, data_type=self.data_type, parent=self)
         elif index == 4:
-            manager = LocationManager(self.active_incident_path)
-            maps_data = manager.get_maps_data()
-            map_filenames = list(maps_data.keys())
-            mapping_dir = os.path.join(self.active_incident_path, "mapping")
             view = SummaryMapView(
                 incident_path=self.active_incident_path,
                 data_type=self.data_type,
-                map_filenames=map_filenames,
-                mapping_dir=mapping_dir,
-                maps_data=maps_data,
                 parent=self
             )
-        # ==========================================
-        # NEW: OVERVIEW WIDGET
-        # ==========================================
         elif index == 5:
             from overview_view import OverviewWidget
             view = OverviewWidget(incident_path=self.active_incident_path, parent=self)
-        # ==========================================
 
         if view is not None:
             self.view_stack.addWidget(view)
@@ -702,14 +689,6 @@ class DataAnalyzerGUI(QMainWindow):
         dialog = ObjectiveDialog(self, self.active_incident_path, zone_name=zone_name, data_type=current_data_type)
         dialog.exec()
 
-    @Slot()
-    def _on_report_hotzone(self): self._launch_objective_dialog("Hotzone")
-    @Slot()
-    def _on_report_warmzone(self): self._launch_objective_dialog("Warmzone")
-    @Slot()
-    def _on_report_fireground(self): self._launch_objective_dialog("Fireground")
-    @Slot()
-    def _on_report_community(self): self._launch_objective_dialog("Community")
 
     @Slot()
     def _on_manage_thresholds(self):
@@ -725,26 +704,14 @@ class DataAnalyzerGUI(QMainWindow):
                 current_widget.refresh()
 
     @Slot()
-    def _on_clear_objectives(self):
+    def _on_manage_objectives(self):
         if not self.active_incident_path:
             self._update_status_bar("⚠️ No active incident.")
             return
-        objectives_file = os.path.join(self.active_incident_path, "reports", "objectives.json")
-        reply = QMessageBox.question(
-            self, "Clear Objectives", "Are you sure you want to delete all objectives?\n\nThis action cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            if os.path.exists(objectives_file):
-                try:
-                    os.remove(objectives_file)
-                    self._update_status_bar("✅ All objectives cleared.")
-                    QMessageBox.information(self, "Success", "All objectives have been deleted.")
-                except OSError as e:
-                    QMessageBox.critical(self, "Error", f"Failed to delete objectives file:\n{e}")
-            else:
-                QMessageBox.information(self, "Info", "No objectives file found to delete.")
-
+        from objectives_manager_dialog import ObjectivesManagerDialog
+        dialog = ObjectivesManagerDialog(self, self.active_incident_path)
+        dialog.exec()
+        
     @Slot()
     def _on_report_publish(self):
         if not self.active_incident_path:
@@ -957,8 +924,8 @@ class DataAnalyzerGUI(QMainWindow):
             self.process_progress.deleteLater()
             self.process_progress = None
 
-    @Slot(str)
-    def _on_import_finished(self, result_path):
+    @Slot(int)
+    def _on_import_finished(self, row_count):
         if hasattr(self, 'process_progress') and self.process_progress:
             self.process_progress.close()
             self.process_progress.deleteLater()
@@ -967,26 +934,22 @@ class DataAnalyzerGUI(QMainWindow):
             self.process_thread.quit()
             self.process_thread.wait()
         QApplication.processEvents()
-        if result_path and os.path.exists(result_path):
-            try:
-                with open(result_path, 'r', encoding='utf-8') as f:
-                    row_count = sum(1 for _ in f) - 1
-            except Exception:
-                row_count = "unknown"
+        
+        if row_count > 0:
             realtime_dir = os.path.join(self.active_incident_path, "data", "realtime")
             file_count = len(glob.glob(os.path.join(realtime_dir, "*.csv")))
             QMessageBox.information(
                 self, "Processing Complete",
-                f"Area data successfully processed!\n\nFiles in realtime directory: {file_count}\nTotal rows in processed data: {row_count}"
+                f"Area data successfully processed!\n\nFiles in realtime directory: {file_count}\nTotal rows imported: {row_count}"
             )
             self._update_status_bar(f"✅ Area data processed ({row_count} rows).")
-            if self.data_type == "area":
-                current_widget = self.view_stack.currentWidget()
-                if hasattr(current_widget, 'refresh'):
-                    current_widget.refresh()
+            
+            current_widget = self.view_stack.currentWidget()
+            if current_widget and hasattr(current_widget, 'refresh'):
+                current_widget.refresh()
         else:
-            QMessageBox.warning(self, "Processing Issue", "No data was processed. Check if CSV files were valid.")
-            self._update_status_bar("⚠️ No data processed.")
+            QMessageBox.warning(self, "Processing Issue", "No new data was processed. Check if CSV files were valid or already imported.")
+            self._update_status_bar("⚠️ No new data processed.")
 
     @Slot(str)
     def _on_copy_error(self, error_msg):

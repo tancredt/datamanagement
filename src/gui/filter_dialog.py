@@ -3,7 +3,7 @@ import os
 import sys
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox,
@@ -34,7 +34,6 @@ DEVICE_KEY_MAP = {
 
 class FilterGroup(QGroupBox):
     """A group box containing checkboxes for filtering."""
-
     def __init__(self, title, parent=None):
         super().__init__(f"{title}:", parent)
         layout = QVBoxLayout(self)
@@ -115,7 +114,6 @@ class FilterGroup(QGroupBox):
 
 class FilterDialog(QDialog):
     """Main dialog for filtering data by time, site, device, and analyte."""
-
     def __init__(
         self,
         parent=None,
@@ -124,12 +122,14 @@ class FilterDialog(QDialog):
         mode="view",       # "view" or "objective"
         initial_filters=None,
         plume_data=None,
+        form=None,         # ✅ NEW: The form type (Table, Summary Map, etc.)
     ):
         super().__init__(parent)
         self.incident_path = incident_path
         self.data_type = data_type
         self.mode = mode   # "view" saves to disk, "objective" doesn't
         self.plume_data = plume_data or []
+        self.form = form   # ✅ NEW: Store the form type
 
         # Determine initial filters based on mode
         if mode == "objective":
@@ -146,10 +146,14 @@ class FilterDialog(QDialog):
         # Load metadata from Database
         self.analyte_dec_pls = self._load_analyte_dec_pls()
         self.thresholds_lookup = self._load_thresholds_lookup()
-        self.available_devices = self.db.get_devices(self.data_type) if self.db else []
-        self.available_locations = self.db.get_markers() if self.db else []
-        self.available_analytes = list(self.analyte_dec_pls.keys())
 
+        if self.data_type == "exposure":
+            self.available_devices = self.db.get_exposure_ids()
+        else:
+            self.available_devices = self.db.get_devices(self.data_type)
+
+        self.available_locations = self.db.get_markers()
+        self.available_analytes = list(self.analyte_dec_pls.keys())
         self._selected_threshold_level = None
 
         # Build UI
@@ -284,19 +288,23 @@ class FilterDialog(QDialog):
         self.start_time_edit.setCalendarPopup(True)
         self.start_time_edit.setDisplayFormat(DATE_FORMAT)
         time_interval_row.addWidget(self.start_time_edit)
+
         time_interval_row.addWidget(QLabel("Stop Time:"))
         self.stop_time_edit = QDateTimeEdit()
         self.stop_time_edit.setCalendarPopup(True)
         self.stop_time_edit.setDisplayFormat(DATE_FORMAT)
         time_interval_row.addWidget(self.stop_time_edit)
+
         time_interval_row.addWidget(QLabel("Interval:"))
         self.interval_combo = QComboBox()
         self.interval_combo.addItems(INTERVAL_OPTIONS)
         self.interval_combo.setCurrentText("Raw")
         time_interval_row.addWidget(self.interval_combo)
+
         self.only_valid_cb = QCheckBox("Only Valid")
         time_interval_row.addWidget(self.only_valid_cb)
         time_interval_row.addStretch()
+
         layout.addLayout(time_interval_row)
 
         # Filter groups
@@ -317,6 +325,7 @@ class FilterDialog(QDialog):
         self.btn_apply.setMinimumWidth(120)
         self.btn_apply.clicked.connect(self._apply_filters)
         btn_row.addWidget(self.btn_apply)
+
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setMinimumHeight(32)
         self.btn_cancel.clicked.connect(self.reject)
@@ -328,9 +337,23 @@ class FilterDialog(QDialog):
 
     def _apply_data_type_constraints(self):
         """Enable/disable controls based on the current data type."""
+        # ✅ NEW: Handle Summary Map form - force Site grouping for area/spot
+        # Summary Map doesn't make sense for Identifier grouping because it
+        # overlays data onto geographic markers (which are sites).
+        if (
+            self.form == "Summary Map"
+            and self.data_type in ("area", "spot")
+        ):
+            self.group_by_combo.setEnabled(False)
+            self.group_by_combo.setCurrentText("Site")
+            self.site_group.set_enabled(True)
+            self.device_group.set_enabled(False)
+
         if self.data_type == "spectral":
             # ✅ Enable Group By and Site filtering for spectral
-            self.group_by_combo.setEnabled(True)
+            # Only override if not already locked by Summary Map constraint
+            if self.form != "Summary Map":
+                self.group_by_combo.setEnabled(True)
             self.threshold_combo.setEnabled(False)
             self.threshold_combo.setCurrentText("No Threshold")
             self.interval_combo.setEnabled(False)
@@ -340,14 +363,14 @@ class FilterDialog(QDialog):
             self.analyte_group.setVisible(False)
             self.analyte_group.setEnabled(False)
         elif self.data_type == "exposure":
-            self.group_by_combo.setEnabled(True)
+            self.group_by_combo.setEnabled(False)
             self.group_by_combo.setCurrentText("Identifier")
             self.interval_combo.setEnabled(False)
             self.only_valid_cb.setEnabled(False)
-            self.site_group.setVisible(True)
-            self.site_group.setTitle("Areas:")
+            self.site_group.setVisible(False)
+            self.site_group.setEnabled(False)
             self.device_group.setTitle("Identifiers:")
-            self._on_group_by_changed("Identifier")
+            self.device_group.setEnabled(True)
         elif self.data_type == "spot":
             self.only_valid_cb.setEnabled(False)
             self.only_valid_cb.setChecked(False)
@@ -390,12 +413,12 @@ class FilterDialog(QDialog):
         for device in self.available_devices:
             self.device_group.add_checkbox(device, checked=True)
 
-        # ✅ Sites / Areas - now applies to ALL data types including spectral
+        # Sites / Areas
         self.site_group.clear()
         if self.data_type != "exposure":
             self.site_group.add_checkbox("Unassigned", checked=True)
-        for loc in self.available_locations:
-            self.site_group.add_checkbox(loc, checked=True)
+            for loc in self.available_locations:
+                self.site_group.add_checkbox(loc, checked=True)
 
         # Analytes (still excluded for spectral)
         if self.data_type != "spectral":
@@ -420,6 +443,7 @@ class FilterDialog(QDialog):
                     dt = QDateTime.fromString(start, DATE_FORMAT)
                     if dt.isValid():
                         self.start_time_edit.setDateTime(dt)
+
             stop = self.initial_filters.get("stop_time")
             if stop:
                 if isinstance(stop, datetime):
@@ -494,15 +518,16 @@ class FilterDialog(QDialog):
             )
 
     def _set_time_range(self):
-        """Sets default start/stop times - same logic for all data types."""
-        now_py = (
-            pd.Timestamp.now()
-            .to_pydatetime()
-            .replace(second=0, microsecond=0)
-        )
-        now = QDateTime(now_py)
-        self.start_time_edit.setDateTime(now.addDays(-1))
-        self.stop_time_edit.setDateTime(now)
+        """Sets default start/stop times to the previous full hour and current full hour."""
+        now_py = datetime.now()
+        # Floor to the current hour (e.g., 16:09 -> 16:00)
+        current_hour = now_py.replace(minute=0, second=0, microsecond=0)
+        # Subtract one hour for the start time (e.g., 16:00 -> 15:00)
+        previous_hour = current_hour - timedelta(hours=1)
+
+        # Apply to UI
+        self.start_time_edit.setDateTime(QDateTime(previous_hour))
+        self.stop_time_edit.setDateTime(QDateTime(current_hour))
 
     # ─────────────────────────────────────────────────────────
     # APPLY / GET FILTERS
@@ -514,6 +539,7 @@ class FilterDialog(QDialog):
         stop_dt = self.stop_time_edit.dateTime().toPython().replace(
             second=0, microsecond=0
         )
+
         if start_dt >= stop_dt:
             QMessageBox.warning(
                 self,

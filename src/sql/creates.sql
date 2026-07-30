@@ -66,7 +66,7 @@ CREATE TABLE area_location (
     start_dt TEXT NOT NULL,
     stop_dt TEXT,
     comment TEXT,
-    device_id INTEGER,
+    device_id INTEGER NOT NULL,
     marker_id INTEGER NOT NULL,
     FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE,
     FOREIGN KEY (marker_id) REFERENCES marker (id) ON DELETE CASCADE
@@ -80,7 +80,6 @@ CREATE TABLE area_invalidations (
     comment TEXT,
     device_id INTEGER,
     analyte_id INTEGER NOT NULL,
-    invalid_flag INTEGER DEFAULT 0,
     FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE,
     FOREIGN KEY (analyte_id) REFERENCES analyte (id) ON DELETE CASCADE
 );
@@ -94,6 +93,7 @@ CREATE TABLE spectral_result (
     file_ref VARCHAR(64),
     device_id INTEGER NOT NULL,
     marker_id INTEGER NOT NULL,
+    UNIQUE(timestamp, device_id),
     FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE,
     FOREIGN KEY (marker_id) REFERENCES marker (id) ON DELETE CASCADE
 );
@@ -109,7 +109,6 @@ CREATE TABLE exposure (
     respiratory VARCHAR(16),
     clothing VARCHAR(16),
     footwear VARCHAR(16),
-    device_id INTEGER NOT NULL,
     FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE
 );
 
@@ -130,37 +129,44 @@ CREATE TABLE exposure_reading(
 -- Plume modeling results
 CREATE TABLE plume(
     id INTEGER PRIMARY KEY ASC,
-    model_dt TEXT,
+    model_dt TEXT UNIQUE,
     file_name VARCHAR(64)
 );
 
--- Objectives and planning data
+-- Objectives
 CREATE TABLE objective(
     id INTEGER PRIMARY KEY ASC,
     zone VARCHAR(16),
     objective TEXT,
     strategy TEXT,
     conclusion TEXT,
-    data_type VARCHAR(16),
-    form VARCHAR(32),
-    filter_file_name VARCHAR(64),
     created_at TEXT,
     updated_at TEXT
+);
+
+-- Observations for objectives
+CREATE TABLE observation(
+    id INTEGER PRIMARY KEY ASC,
+    data_type VARCHAR(16),
+    form VARCHAR(16),
+    filter TEXT,
+    objective_id INTEGER,
+    FOREIGN KEY (objective_id) REFERENCES objective(id) ON DELETE CASCADE
 );
 
 -- Area readings for continuous monitoring periods
 CREATE TABLE area_reading (
     id INTEGER PRIMARY KEY ASC,
     timestamp TEXT NOT NULL,
-    serial_number VARCHAR(32),
-    marker_id INTEGER,
+    marker_id INTEGER NOT NULL,
     status VARCHAR(16),
     battery REAL,
     latitude REAL,
     longitude REAL,
-    device_id INTEGER,
-    FOREIGN KEY (marker_id) REFERENCES marker (id) ON DELETE SET NULL,
-    FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE SET NULL
+    device_id INTEGER NOT NULL,
+    UNIQUE(timestamp, device_id),
+    FOREIGN KEY (marker_id) REFERENCES marker (id) ON DELETE CASCADE,
+    FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE
 );
 
 -- Junction table for area reading analyte values
@@ -201,6 +207,8 @@ CREATE INDEX idx_area_reading_marker ON area_reading(marker_id);
 CREATE INDEX idx_area_reading_analyte_reading ON area_reading_analyte(area_reading_id);
 CREATE INDEX idx_area_reading_analyte_analyte ON area_reading_analyte(analyte_id);
 CREATE INDEX idx_area_reading_analyte_invalidation ON area_reading_analyte(invalidation_id);
+CREATE INDEX idx_area_invalidations_device_analyte ON area_invalidations(device_id, analyte_id);
+CREATE INDEX idx_area_invalidations_start_dt ON area_invalidations(start_dt);
 CREATE INDEX idx_spot_reading_timestamp ON spot_reading(timestamp);
 CREATE INDEX idx_spot_reading_marker ON spot_reading(marker_id);
 CREATE INDEX idx_spot_reading_device ON spot_reading(device_id);

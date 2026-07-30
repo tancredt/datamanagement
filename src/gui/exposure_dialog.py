@@ -444,3 +444,65 @@ class ExposuresDialog(QDialog):
                 self._update_table()
         else:
             QMessageBox.information(self, "No Selection", "Please select a row in the table to remove.")
+
+    def _validate_and_accept(self):
+        exp_id = self.cmb_id.currentText().strip()
+        if not exp_id:
+            QMessageBox.warning(self, "Validation Error", "Id is mandatory.")
+            self.cmb_id.setFocus()
+            return
+
+        device = self.cmb_device.currentText().strip()
+        if not device:
+            QMessageBox.warning(self, "Validation Error", "Device is mandatory.")
+            self.cmb_device.setFocus()
+            return
+
+        if self.dt_start.dateTime() >= self.dt_stop.dateTime():
+            QMessageBox.warning(self, "Validation Error", "Start time must be before Stop time.")
+            self.dt_stop.setFocus()
+            return
+
+        # ==========================================
+        # ✅ NEW: Validate Analyte Readings (min <= mean <= max)
+        # ==========================================
+        for analyte, inputs in self.analyte_inputs.items():
+            min_str = inputs["min"].text().strip()
+            max_str = inputs["max"].text().strip()
+            mean_str = inputs["mean"].text().strip()
+
+            # Skip validation if no values are provided for this analyte
+            if not (min_str or max_str or mean_str):
+                continue
+
+            # Parse floats (QDoubleValidator usually prevents bad input, but this is a safety net)
+            try:
+                min_val = float(min_str) if min_str else None
+                max_val = float(max_str) if max_str else None
+                mean_val = float(mean_str) if mean_str else None
+            except ValueError:
+                QMessageBox.warning(self, "Validation Error", f"Invalid numeric value entered for analyte '{analyte}'.")
+                return
+
+            # Rule 1: Min cannot be greater than Max
+            if min_val is not None and max_val is not None and min_val > max_val:
+                QMessageBox.warning(self, "Validation Error", 
+                    f"For analyte '{analyte}', Min ({min_val}) cannot be greater than Max ({max_val}).")
+                inputs["min"].setFocus()
+                return
+
+            # Rule 2: Min cannot be greater than Mean
+            if min_val is not None and mean_val is not None and min_val > mean_val:
+                QMessageBox.warning(self, "Validation Error", 
+                    f"For analyte '{analyte}', Min ({min_val}) cannot be greater than Mean ({mean_val}).")
+                inputs["min"].setFocus()
+                return
+
+            # Rule 3: Mean cannot be greater than Max
+            if mean_val is not None and max_val is not None and mean_val > max_val:
+                QMessageBox.warning(self, "Validation Error", 
+                    f"For analyte '{analyte}', Mean ({mean_val}) cannot be greater than Max ({max_val}).")
+                inputs["mean"].setFocus()
+                return
+
+        self.accept()

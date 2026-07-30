@@ -56,9 +56,9 @@ class SummaryChartView(DataView):
         
         # Matplotlib canvas
         self.summary_figure, self.summary_ax = plt.subplots(figsize=(8, 4))
+        self.summary_figure.set_tight_layout(True)  # ✅ Handle tight layout automatically
         self.summary_canvas = FigureCanvas(self.summary_figure)
         self.summary_toolbar = NavigationToolbar(self.summary_canvas, self)
-        
         layout.addWidget(self.summary_toolbar)
         layout.addWidget(self.summary_canvas, stretch=1)
         
@@ -183,6 +183,6 @@ class SummaryChartView(DataView):
             self.summary_ax.legend(by_label.values(), by_label.keys(), fontsize='small', ncol=2)
         else:
             self.summary_ax.legend(by_label.values(), by_label.keys())
-            
-        self.summary_figure.tight_layout()
+        
         self.summary_canvas.draw()
+

@@ -21,10 +21,13 @@ logger = logging.getLogger(__name__)
 
 class SummaryMapCanvas(QWidget):
     """Custom widget to display a map image and overlay summary data at marker locations."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.pixmap = None
-        self.markers_data = []
+    def __init__(self, incident_path, data_type, parent=None):
+        super().__init__(incident_path, data_type, parent)
+        # Fetch map data directly from the database
+        self.db = IncidentDatabase(incident_path)
+        self.mapping_dir = os.path.join(incident_path, "mapping")
+        self.map_filenames = self.db.get_maps()
+        self.maps_data = self.db.get_maps_data()
 
     def set_image(self, pixmap):
         self.pixmap = pixmap

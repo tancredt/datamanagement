@@ -86,16 +86,28 @@ class SummaryTableView(DataView):
             return
             
         df = self.filtered_data.copy()
+
         is_exposure = self.filter_summary.get("data_type") == "exposure"
 
-        if is_exposure:
+
             group_col = 'IDENTIFIER'      # Changed from 'DEVICE'
             group_by_label = "Identifier"
         else:
             group_by = self.filter_summary.get("group_by", "Device")
             group_col = 'DEVICE' if group_by == "Device" else 'SITE'
             group_by_label = group_by
-
+        # ... (rest of the method remains exactly the same)
+        
+        # Determine grouping column and label
+        if is_exposure:
+            group_col = 'DEVICE'
+            group_by_label = "Identifier"
+        else:
+            group_by = self.filter_summary.get("group_by", "Device")
+            group_col = 'DEVICE' if group_by == "Device" else 'SITE'
+            group_by_label = group_by
+            
+        # Determine valid analytes
         if is_exposure:
             valid_analytes = []
             for g in self.available_analytes:

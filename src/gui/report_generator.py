@@ -72,33 +72,35 @@ def format_table_header(col_name):
             suffix = s[1:]
             col_str = col_str[:-len(s)]
             break
-
     if '(' in col_str and ')' in col_str:
         base = col_str.split('(')[0]
         unit = col_str.split('(')[1].split(')')[0]
         parts = [base, unit]
     else:
         parts = [col_str]
-
     if suffix:
         parts.append(suffix)
-
     return "<br/>".join(parts)
 
-def create_pdf_table_from_df(df, dec_pls_dict=None):
+def create_pdf_table_from_df(df, dec_pls_dict=None, group_by=None):
     """Converts a pandas DataFrame to a ReportLab Table."""
     if df is None or df.empty:
         return [Paragraph("No Data", _STYLE_NORMAL)]
-
     if dec_pls_dict is None:
-        dec_pls_dict = {}
-
+         dec_pls_dict = {}
     cols_to_show = [c for c in df.columns if not str(c).upper().startswith('INVALID_')]
     display_df = df[cols_to_show].copy()
+    
+    # Drop the non-grouped location column to match GUI behavior
+    if group_by:
+        if group_by == "Device" and 'SITE' in display_df.columns:
+            display_df = display_df.drop(columns=['SITE'], errors='ignore')
+        elif group_by == "Site" and 'DEVICE' in display_df.columns:
+            display_df = display_df.drop(columns=['DEVICE'], errors='ignore')
 
     if 'LOG TIME' in display_df.columns:
         display_df['LOG TIME'] = display_df['LOG TIME'].dt.strftime('%Y-%m-%d %H:%M:%S')
-
+    
     # Helper to resolve decimal places for base and aggregated columns
     def get_dec_pls(col_name):
         if col_name in dec_pls_dict:
@@ -109,19 +111,19 @@ def create_pdf_table_from_df(df, dec_pls_dict=None):
                 if base in dec_pls_dict:
                     return dec_pls_dict[base]
         return 2  # Default fallback
-
+        
     for col in display_df.columns:
         if pd.api.types.is_numeric_dtype(display_df[col]):
             dec_pls = get_dec_pls(col)
             display_df[col] = display_df[col].apply(lambda x: f"{x:.{dec_pls}f}" if pd.notna(x) else "")
         else:
             display_df[col] = display_df[col].fillna("").astype(str)
-
+            
     col_labels = [Paragraph(format_table_header(c), _STYLE_HEADER_CELL) for c in display_df.columns.tolist()]
     data = [col_labels]
     for _, row in display_df.iterrows():
         data.append([str(val) for val in row])
-
+        
     # Calculate specific column widths
     col_widths = []
     for col in display_df.columns:
@@ -137,14 +139,14 @@ def create_pdf_table_from_df(df, dec_pls_dict=None):
             col_widths.append(0.7 * inch)
         else:
             col_widths.append(0.9 * inch)
-
+            
     # Scale down proportionally if total width exceeds available page width
     total_width = sum(col_widths)
     max_width = 9.5 * inch
     if total_width > max_width:
         scale = max_width / total_width
         col_widths = [w * scale for w in col_widths]
-
+        
     table = Table(data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2563eb')),
@@ -163,7 +165,6 @@ def create_pdf_summary_table(summary_data, group_by_label):
     """Converts summary data to a ReportLab Table."""
     if not summary_data:
         return [Paragraph("No Summary Data", _STYLE_NORMAL)]
-
     col_labels = [
         Paragraph(format_table_header(group_by_label), _STYLE_SUMMARY_HEADER),
         Paragraph("Analyte", _STYLE_SUMMARY_HEADER),
@@ -182,7 +183,6 @@ def create_pdf_summary_table(summary_data, group_by_label):
             f"{mean_v:.{dec_pls}f}" if pd.notna(mean_v) else "",
             str(count_v),
         ])
-
     table = Table(data, colWidths=[1.5*inch, 1.5*inch, 1.2*inch, 1.2*inch, 1.2*inch, 0.9*inch], repeatRows=1)
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10b981')),
@@ -227,17 +227,69 @@ def add_page_number(canvas, doc, footer_text):
 def generate_pdf_report(incident_path, parent_widget=None):
     temp_files = []
     try:
-        # 1. Load Configs & Metadata
-        incident_data = load_json(os.path.join(incident_path, "meta", "incident.json"))
-        objectives_data = load_json(os.path.join(incident_path, "reports", "objectives.json"))
-
-        # ✅ USE DB MANAGER FOR MAPS
+        # ─────────────────────────────────────────────────────────
+        # 1. INITIALIZE DB MANAGER FIRST (needed for everything)
+        # ─────────────────────────────────────────────────────────
         db = IncidentDatabase(incident_path)
+
+        # ─────────────────────────────────────────────────────────
+        # 2. LOAD INCIDENT METADATA
+        # ─────────────────────────────────────────────────────────
+        incident_data = load_json(os.path.join(incident_path, "meta", "incident.json"))
+
+        # ─────────────────────────────────────────────────────────
+        # 3. FETCH OBJECTIVES FROM DATABASE (replaces old JSON file)
+        # ─────────────────────────────────────────────────────────
+        raw_objectives = db.get_all_objectives()
+        objectives_data = {}
+        for obj in raw_objectives:
+            zone = obj.get('zone', 'General')
+            if zone not in objectives_data:
+                objectives_data[zone] = {"objectives": []}
+            
+            # Parse each observation's filter JSON back into a dict
+            mapped_obs = []
+            for obs in obj.get('observations', []):
+                filter_data = {}
+                if obs.get('filter'):
+                    try:
+                        filter_data = json.loads(obs['filter'])
+                        # ✅ CRITICAL: Parse datetime strings back to datetime objects
+                        # The FilterDialog saves them as "YYYY-MM-DD HH:MM" strings
+                        for key in ('start_time', 'stop_time'):
+                            val = filter_data.get(key)
+                            if isinstance(val, str) and val:
+                                try:
+                                    filter_data[key] = datetime.datetime.strptime(val, "%Y-%m-%d %H:%M")
+                                except ValueError:
+                                    try:
+                                        filter_data[key] = datetime.datetime.fromisoformat(val)
+                                    except ValueError:
+                                        logger.warning(f"Could not parse datetime: {val}")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse observation filter JSON: {e}")
+                        filter_data = {}
+                mapped_obs.append({
+                    'data_type': obs.get('data_type', 'spot'),
+                    'form': obs.get('form', 'Table'),
+                    'filter_data': filter_data
+                })
+            objectives_data[zone]["objectives"].append({
+                'objective_number': obj.get('id'),
+                'status': 'Complete',
+                'objective': obj.get('objective', ''),
+                'strategy': obj.get('strategy', ''),
+                'conclusions': obj.get('conclusion', ''),  # DB column is 'conclusion'
+                'created': obj.get('created_at', ''),
+                'updated': obj.get('updated_at', ''),
+                'observations': mapped_obs
+            })
+
+        # ─────────────────────────────────────────────────────────
+        # 4. LOAD MAPS, PLUMES, ETC. (db already exists now)
+        # ─────────────────────────────────────────────────────────
         raw_maps_data = db.get_maps_data()
         mapping_dir = os.path.join(incident_path, "mapping")
-        
-        # ✅ FIX: Transform flat DB markers to include nested 'coordinates' and flat 'x'/'y' 
-        # This ensures compatibility with map_renderer.py and the Location Directory
         maps_data = {}
         for fname, markers in raw_maps_data.items():
             formatted_markers = []
@@ -290,11 +342,18 @@ def generate_pdf_report(incident_path, parent_widget=None):
         story = []
         footer_label = incident_data.get('label', 'Air Monitoring Report')
 
-        def add_observation_header(data_type, summary_str):
+        def add_observation_header(data_type, form, summary_str, group_by=None):
             story.append(Paragraph("<b>Observations:</b>", _STYLE_HEADING1))
             type_display_map = {"area": "Area Data", "spot": "Spot Data", "spectral": "Spectral Data", "exposure": "Exposure Data", "plume": "Plume Data"}
             type_display = type_display_map.get(data_type, "Unknown Data")
-            story.append(Paragraph(f"<i>{type_display}</i>", _STYLE_NORMAL))
+            
+            header_text = f"<i>{type_display} - {form}"
+            if group_by and form in ['Summary Table', 'Summary Chart', 'Summary Map']:
+                display_group = "Identifier" if group_by == "Device" else group_by
+                header_text += f" (Grouped by {display_group})"
+            header_text += "</i>"
+            
+            story.append(Paragraph(header_text, _STYLE_NORMAL))
             story.append(Spacer(1, 0.1*inch))
             if summary_str:
                 story.append(Paragraph(summary_str, _STYLE_NORMAL))
@@ -334,12 +393,10 @@ def generate_pdf_report(incident_path, parent_widget=None):
                 label = m.get('label', 'N/A')
                 if label and label not in unique_markers:
                     unique_markers[label] = m
-
         loc_table_data = [[Paragraph("<b>Label</b>", _STYLE_HEADER_CELL), Paragraph("<b>Description</b>", _STYLE_HEADER_CELL), Paragraph("<b>Latitude</b>", _STYLE_HEADER_CELL), Paragraph("<b>Longitude</b>", _STYLE_HEADER_CELL)]]
         for label in sorted(unique_markers.keys()):
             m = unique_markers[label]
             desc = m.get('description', '') or 'N/A'
-            
             # ✅ FIX: Handle both flat DB structure and nested structure for Lat/Lon
             lat = m.get('latitude')
             lon = m.get('longitude')
@@ -347,11 +404,9 @@ def generate_pdf_report(incident_path, parent_widget=None):
                 coords = m.get('coordinates', {})
                 if lat is None: lat = coords.get('latitude')
                 if lon is None: lon = coords.get('longitude')
-                
             lat_str = f"{lat:.6f}" if lat is not None else "N/A"
             lon_str = f"{lon:.6f}" if lon is not None else "N/A"
             loc_table_data.append([label, desc, lat_str, lon_str])
-
         if len(loc_table_data) > 1:
             col_widths = [1.0*inch, 4.5*inch, 1.5*inch, 1.5*inch]
             loc_table = Table(loc_table_data, colWidths=col_widths, repeatRows=1)
@@ -375,7 +430,6 @@ def generate_pdf_report(incident_path, parent_widget=None):
             story.append(Spacer(1, 3*inch))
             story.append(Paragraph(zone_name, _STYLE_ZONE))
             story.append(PageBreak())
-
             for obj in zone_data.get('objectives', []):
                 obj_num = obj.get('objective_number', 1)
                 status = obj.get('status', 'N/A')
@@ -384,7 +438,6 @@ def generate_pdf_report(incident_path, parent_widget=None):
                 conclusions = obj.get('conclusions', 'N/A')
                 created = obj.get('created', 'N/A')
                 updated = obj.get('updated', 'N/A')
-
                 story.append(Paragraph(f"Objective {obj_num}", _STYLE_HEADING1))
                 story.append(Paragraph(f"<b>Status:</b> {status} | <b>Created:</b> {created} | <b>Updated:</b> {updated}", _STYLE_NORMAL))
                 story.append(Spacer(1, 0.2*inch))
@@ -404,17 +457,13 @@ def generate_pdf_report(incident_path, parent_widget=None):
                     form = obs.get('form', 'Table')
                     filter_data_dict = obs.get('filter_data') or {}
                     data_type = obs.get('data_type', 'spot')
-                    
                     start_time = pd.to_datetime(filter_data_dict.get('start_time'))
                     stop_time = pd.to_datetime(filter_data_dict.get('stop_time'))
                     interval = filter_data_dict.get('interval', 'Raw')
                     if data_type == 'spot': interval = 'Raw'
-                    
                     selected_analytes = filter_data_dict.get('selected_analytes', [])
-                    
                     start_t_str = start_time.strftime('%Y-%m-%d %H:%M') if hasattr(start_time, 'strftime') else str(start_time)
                     stop_t_str = stop_time.strftime('%Y-%m-%d %H:%M') if hasattr(stop_time, 'strftime') else str(stop_time)
-                    
                     summary_parts = []
                     if data_type != 'spectral' and selected_analytes:
                         summary_parts.append(f"<b>Analytes:</b> {', '.join(selected_analytes)}")
@@ -428,15 +477,16 @@ def generate_pdf_report(incident_path, parent_widget=None):
                     if data_type == 'spectral' and form not in ['Table', 'Summary Map']: continue
                     if data_type == 'plume' and form != 'Summary Map': continue
 
+                    group_by = filter_data_dict.get('group_by', 'Device')
                     try:
-                        add_observation_header(data_type, summary_str)
-                        
+                        add_observation_header(data_type, form, summary_str, group_by=group_by)
                         if form == 'Table':
                             view = TableView(incident_path=incident_path, data_type=data_type)
                             view.set_filter_summary(filter_data_dict)
                             view._render()
-                            story.extend(create_pdf_table_from_df(view.filtered_data, dec_pls_dict=view.analyte_dec_pls))
-                            
+                            # ✅ Use the view's own column reordering logic to match the GUI
+                            reordered_df = view._reorder_columns(view.filtered_data)
+                            story.extend(create_pdf_table_from_df(reordered_df, dec_pls_dict=view.analyte_dec_pls, group_by=group_by))
                         elif form == 'Chart' and data_type not in ['spectral', 'exposure', 'plume']:
                             view = ChartView(incident_path=incident_path, data_type=data_type)
                             view.set_filter_summary(filter_data_dict)
@@ -449,7 +499,6 @@ def generate_pdf_report(incident_path, parent_widget=None):
                             plt.close(fig)
                             story.append(_make_image_flowable(tmp_path))
                             temp_files.append(tmp_path)
-                            
                         elif form == 'Summary Chart' and data_type not in ['spectral', 'plume']:
                             view = SummaryChartView(incident_path=incident_path, data_type=data_type)
                             view.set_filter_summary(filter_data_dict)
@@ -463,14 +512,12 @@ def generate_pdf_report(incident_path, parent_widget=None):
                             plt.close(fig)
                             story.append(_make_image_flowable(tmp_path))
                             temp_files.append(tmp_path)
-                            
                         elif form == 'Summary Table' and data_type not in ['spectral', 'plume']:
                             view = SummaryTableView(incident_path=incident_path, data_type=data_type)
                             view.set_filter_summary(filter_data_dict)
                             view._render()
                             group_by_label = "Identifier" if data_type == "exposure" else view.filter_summary.get("group_by", "Device")
                             story.extend(create_pdf_summary_table(view.summary_data, group_by_label))
-                            
                         elif form == 'Summary Map':
                             if data_type == 'plume':
                                 start_t = filter_data_dict.get('start_time')
@@ -494,7 +541,7 @@ def generate_pdf_report(incident_path, parent_widget=None):
                                         story.append(Spacer(1, 0.2*inch))
                             # ✅ FIXED: Allow spectral and exposure to use Summary Map
                             elif data_type != 'exposure':
-                                view = SummaryMapView(incident_path=incident_path, data_type=data_type, map_filenames=list(maps_data.keys()), mapping_dir=mapping_dir, maps_data=maps_data)
+                                view = SummaryMapView(incident_path=incident_path, data_type=data_type)
                                 view.set_filter_summary(filter_data_dict)
                                 view._report_stats_pref = filter_data_dict.get("stats_pref", "Mean")
                                 view._render()
@@ -508,15 +555,17 @@ def generate_pdf_report(incident_path, parent_widget=None):
                                 temp_files.append(tmp_path)
                     except Exception as e:
                         logger.error(f"Failed to render view for observation: {e}")
-                        add_observation_header(data_type, summary_str)
+                        add_observation_header(data_type, form, summary_str, group_by=group_by)
                         story.append(Paragraph("No Data", _STYLE_NO_DATA))
-                    story.append(Spacer(1, 0.3*inch))
-                    story.append(PageBreak())
+                    
+                    # ✅ FIXED: Skip extra page break after Summary Map (plumes already handle their own page breaks)
+                    if form != 'Summary Map':
+                        story.append(Spacer(1, 0.3*inch))
+                        story.append(PageBreak())
 
         doc.build(story, onFirstPage=lambda c, d: add_page_number(c, d, "Title Page"), onLaterPages=lambda c, d: add_page_number(c, d, footer_label))
         logger.info(f"✅ PDF Report generated: {pdf_path}")
         return pdf_path
-
     except Exception as e:
         logger.error(f"Failed to generate PDF report: {e}")
         raise e
@@ -524,3 +573,4 @@ def generate_pdf_report(incident_path, parent_widget=None):
         for tmp_path in temp_files:
             try: os.remove(tmp_path)
             except Exception: pass
+            

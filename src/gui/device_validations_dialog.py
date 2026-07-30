@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QComboBox,
     QTableWidget, QTableWidgetItem, QPushButton, QDialogButtonBox,
     QMessageBox, QHeaderView, QFormLayout, QDateTimeEdit, QLineEdit,
-    QCheckBox, QLabel, QScrollArea, QWidget
+    QCheckBox, QLabel, QScrollArea, QWidget, QProgressDialog, QApplication
 )
 from PySide6.QtCore import Qt, QDateTime
 from datamanagement.db_manager import IncidentDatabase
@@ -12,14 +12,13 @@ from datamanagement.db_manager import IncidentDatabase
 logger = logging.getLogger(__name__)
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
 
-
 class AnalyteSelectionWidget(QWidget):
     def __init__(self, analytes, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
-
+        
         header = QHBoxLayout()
         header.addWidget(QLabel("<b>Invalidate Analytes *:</b>"))
         self.toggle_btn = QPushButton("Select All")
@@ -28,19 +27,19 @@ class AnalyteSelectionWidget(QWidget):
         header.addWidget(self.toggle_btn)
         header.addStretch()
         layout.addLayout(header)
-
+        
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setMaximumHeight(120)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
+        
         self.container = QWidget()
         self.container_layout = QVBoxLayout(self.container)
         self.container_layout.setContentsMargins(5, 5, 5, 5)
         self.container_layout.setSpacing(4)
         self.scroll.setWidget(self.container)
         layout.addWidget(self.scroll)
-
+        
         self.checkboxes = []
         for analyte in analytes:
             cb = QCheckBox(analyte)
@@ -66,13 +65,12 @@ class AnalyteSelectionWidget(QWidget):
         for cb in self.checkboxes:
             cb.setChecked(cb.text() in analytes)
 
-
 class AddDeviceValidationDialog(QDialog):
     def __init__(self, parent=None, incident_path=None, initial_data=None, existing_validations=None, exclude_index=None):
         super().__init__(parent)
         self.incident_path = incident_path
         self.db = IncidentDatabase(incident_path)
-
+        
         # Populate choices directly from the database
         self.available_devices = self.db.get_devices("area")
         self.available_analytes = [a['label'] for a in self.db.get_analytes()]
@@ -80,7 +78,7 @@ class AddDeviceValidationDialog(QDialog):
         self.initial_data = initial_data
         self.existing_validations = existing_validations or []
         self.exclude_index = exclude_index
-
+        
         self.setWindowTitle("Edit Validation" if initial_data else "Add Validation")
         self.setMinimumWidth(450)
         self._setup_ui()
@@ -89,27 +87,27 @@ class AddDeviceValidationDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
-
+        
         form = QFormLayout()
         form.setSpacing(8)
         form.setLabelAlignment(Qt.AlignRight)
-
+        
         self.cmb_device = QComboBox()
         self.cmb_device.setEditable(True)
         self.cmb_device.setMinimumHeight(28)
         self.cmb_device.addItems(self.available_devices)
         form.addRow("Device *: ", self.cmb_device)
-
+        
         self.analyte_selector = AnalyteSelectionWidget(self.available_analytes)
         form.addRow("Analytes *: ", self.analyte_selector)
-
+        
         self.dt_start = QDateTimeEdit()
         self.dt_start.setCalendarPopup(True)
         self.dt_start.setDateTime(QDateTime.currentDateTime())
         self.dt_start.setDisplayFormat(DATE_FORMAT)
         self.dt_start.setMinimumHeight(28)
         form.addRow("Start *: ", self.dt_start)
-
+        
         self.chk_has_stop = QCheckBox("Stopped")
         self.dt_stop = QDateTimeEdit()
         self.dt_stop.setCalendarPopup(True)
@@ -117,43 +115,41 @@ class AddDeviceValidationDialog(QDialog):
         self.dt_stop.setDisplayFormat(DATE_FORMAT)
         self.dt_stop.setMinimumHeight(28)
         self.dt_stop.setEnabled(False)
-
+        
         self.txt_comment = QLineEdit()
         self.txt_comment.setPlaceholderText("Optional note...")
         self.txt_comment.setMinimumHeight(28)
         self.txt_comment.setEnabled(False)
-
+        
         self.chk_has_stop.toggled.connect(self.dt_stop.setEnabled)
         self.chk_has_stop.toggled.connect(self.txt_comment.setEnabled)
-
+        
         stop_layout = QHBoxLayout()
         stop_layout.addWidget(self.chk_has_stop)
         stop_layout.addWidget(self.dt_stop)
         stop_layout.addStretch()
         form.addRow("Stop: ", stop_layout)
         form.addRow("Comment: ", self.txt_comment)
-
+        
         if self.initial_data:
             self.cmb_device.setCurrentText(self.initial_data.get("device", ""))
             self.analyte_selector.set_selected_analytes(self.initial_data.get("analytes", []))
-            
             dt_start = QDateTime.fromString(self.initial_data.get("start", ""), DATE_FORMAT)
             if dt_start.isValid(): self.dt_start.setDateTime(dt_start)
-            
             stop_val = self.initial_data.get("stop", "")
             if stop_val:
                 self.chk_has_stop.setChecked(True)
                 dt_stop = QDateTime.fromString(stop_val, DATE_FORMAT)
                 if dt_stop.isValid(): self.dt_stop.setDateTime(dt_stop)
-                
             self.txt_comment.setText(self.initial_data.get("comment", ""))
-
+            
         layout.addLayout(form)
         layout.addSpacing(10)
-
+        
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.setMinimumHeight(34)
         layout.addWidget(btn_box)
+        
         btn_box.rejected.connect(self.reject)
         btn_box.button(QDialogButtonBox.Ok).clicked.connect(self._validate_and_accept)
 
@@ -162,18 +158,16 @@ class AddDeviceValidationDialog(QDialog):
         if not device:
             QMessageBox.warning(self, "Validation Error", "Device is mandatory.")
             return
-
         if not self.analyte_selector.get_selected_analytes():
             QMessageBox.warning(self, "Validation Error", "Please select at least one analyte to invalidate.")
             return
-
+            
         start_dt = self.dt_start.dateTime()
         if self.chk_has_stop.isChecked():
             stop_dt = self.dt_stop.dateTime()
             if start_dt >= stop_dt:
                 QMessageBox.warning(self, "Validation Error", "Start datetime cannot be after or equal to Stop datetime.")
                 return
-
         self.accept()
 
     def get_data(self):
@@ -185,19 +179,18 @@ class AddDeviceValidationDialog(QDialog):
             "comment": self.txt_comment.text().strip() if self.chk_has_stop.isChecked() else ""
         }
 
-
 class DeviceValidationsDialog(QDialog):
     def __init__(self, parent=None, incident_path=None):
         super().__init__(parent)
         self.incident_path = incident_path
         self.validations_dir = os.path.join(incident_path, "validations")
-
+        
         # Initialize Database Manager
         self.db = IncidentDatabase(incident_path)
         
         # Load data directly from the DB
         self.all_validations = self.db.get_area_invalidations()
-
+        
         self.setWindowTitle("Device Validations Manager")
         self.resize(850, 550)
         self._setup_ui()
@@ -208,7 +201,7 @@ class DeviceValidationsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
-
+        
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Analytes", "Device", "Start", "Stop", "Comment"])
@@ -219,24 +212,24 @@ class DeviceValidationsDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
-
+        
         btn_row = QHBoxLayout()
         self.btn_add = QPushButton("Add Validation...")
         self.btn_add.setMinimumHeight(32)
         btn_row.addWidget(self.btn_add)
-
+        
         self.btn_edit = QPushButton("Edit Selected...")
         self.btn_edit.setMinimumHeight(32)
         self.btn_edit.setEnabled(False)
         btn_row.addWidget(self.btn_edit)
-
+        
         self.btn_remove = QPushButton("Remove Selected")
         self.btn_remove.setMinimumHeight(32)
         self.btn_remove.setEnabled(False)
         btn_row.addWidget(self.btn_remove)
         btn_row.addStretch()
         layout.addLayout(btn_row)  
-
+        
         self.btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
         self.btn_box.setMinimumHeight(34)
         layout.addWidget(self.btn_box)
@@ -269,6 +262,15 @@ class DeviceValidationsDialog(QDialog):
         dialog = AddDeviceValidationDialog(self, incident_path=self.incident_path, existing_validations=self.all_validations)
         if dialog.exec() == QDialog.Accepted:
             data = dialog.get_data()
+            
+            # ✅ Show indeterminate progress dialog during heavy DB sync
+            progress = QProgressDialog("Updating database...", None, 0, 0, self)
+            progress.setWindowTitle("Please Wait")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setCancelButton(None)
+            progress.show()
+            QApplication.processEvents()
+            
             self.db.add_area_invalidation(
                 device_label=data["device"],
                 start_dt=data["start"],
@@ -276,6 +278,9 @@ class DeviceValidationsDialog(QDialog):
                 comment=data["comment"],
                 analyte_labels=data["analytes"]
             )
+            
+            progress.close()
+            
             self.all_validations = self.db.get_area_invalidations()
             self._update_table()
 
@@ -292,7 +297,19 @@ class DeviceValidationsDialog(QDialog):
             )
             if dialog.exec() == QDialog.Accepted:
                 new_data = dialog.get_data()
+                
+                # ✅ Show indeterminate progress dialog during heavy DB sync
+                progress = QProgressDialog("Updating database...", None, 0, 0, self)
+                progress.setWindowTitle("Please Wait")
+                progress.setWindowModality(Qt.WindowModal)
+                progress.setCancelButton(None)
+                progress.show()
+                QApplication.processEvents()
+                
                 self.db.edit_area_invalidation(old_data, new_data)
+                
+                progress.close()
+                
                 self.all_validations = self.db.get_area_invalidations()
                 self._update_table()
         else:
@@ -307,7 +324,19 @@ class DeviceValidationsDialog(QDialog):
             )
             if reply == QMessageBox.Yes:
                 data = self.all_validations[selected_row]
+                
+                # ✅ Show indeterminate progress dialog during heavy DB sync
+                progress = QProgressDialog("Updating database...", None, 0, 0, self)
+                progress.setWindowTitle("Please Wait")
+                progress.setWindowModality(Qt.WindowModal)
+                progress.setCancelButton(None)
+                progress.show()
+                QApplication.processEvents()
+                
                 self.db.delete_area_invalidation(data)
+                
+                progress.close()
+                
                 self.all_validations = self.db.get_area_invalidations()
                 self._update_table()
         else:
