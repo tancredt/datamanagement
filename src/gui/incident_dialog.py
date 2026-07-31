@@ -82,12 +82,12 @@ class IncidentDialog(QDialog):
         self.lbl_label.setPlaceholderText("Letters, numbers, underscores only")
         
         self.txt_call_no = QLineEdit()
-        self.txt_call_no.setPlaceholderText("e.g., INC-2026-001 or Dispatch #")
+        self.txt_call_no.setPlaceholderText("e.g., 21200")
         
         self.cal_date = QCalendarWidget()
         
         self.txt_company = QLineEdit()
-        self.txt_company.setPlaceholderText("Operating company")
+        self.txt_company.setPlaceholderText("Company Name")
         
         self.txt_address = QLineEdit()
         self.txt_address.setPlaceholderText("Full site address")

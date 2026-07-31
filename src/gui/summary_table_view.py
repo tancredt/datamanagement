@@ -34,13 +34,13 @@ class SummaryTableView(DataView):
         self._setup_ui()
         self._render()
 
+        
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        
         self.summary_table = QTableWidget()
         self.summary_table.setColumnCount(6)
-        self.summary_table.setHorizontalHeaderLabels(["Group", "Analyte", "Minimum", "Maximum", "Mean", "Count"])
+        self.summary_table.setHorizontalHeaderLabels(["Group", "Analyte", "Mean", "Maximum", "Minimum", "Count"])
         self.summary_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.summary_table.setAlternatingRowColors(True)
         self.summary_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -65,7 +65,7 @@ class SummaryTableView(DataView):
         if file_path:
             try:
                 df = pd.DataFrame(self.summary_data, columns=['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count', 'DecPls'])
-                for col in ['Min', 'Max', 'Mean']:
+                for col in ['Mean', 'Max', 'Min']:
                     df[col] = df.apply(lambda row: f"{row[col]:.{row['DecPls']}f}" if pd.notna(row[col]) else "", axis=1)
                 df.drop(columns=['DecPls'], inplace=True)
                 df.rename(columns={'Group': group_by_name}, inplace=True)
@@ -79,87 +79,55 @@ class SummaryTableView(DataView):
         return self.summary_data
 
     def _render(self):
-        """Calculates statistics and populates the table using base class state."""
+        """Calculates statistics and populates the table using the shared grouping function."""
         if self.filtered_data is None or self.filtered_data.empty:
             self.summary_table.setRowCount(0)
             self.summary_data = []
             return
-            
+        
         df = self.filtered_data.copy()
         is_exposure = self.filter_summary.get("data_type") == "exposure"
-
+        
+        # 1. Determine group column
         if is_exposure:
-            group_col = 'IDENTIFIER'      # Changed from 'DEVICE'
+            group_col = 'IDENTIFIER'
             group_by_label = "Identifier"
         else:
             group_by = self.filter_summary.get("group_by", "Device")
             group_col = 'DEVICE' if group_by == "Device" else 'SITE'
             group_by_label = group_by
 
+        # 2. Determine valid analytes
         if is_exposure:
-            valid_analytes = []
-            for g in self.available_analytes:
-                if f"{g}_min" in df.columns or f"{g}_max" in df.columns or f"{g}_mean" in df.columns:
-                    valid_analytes.append(g)
+            valid_analytes = [g for g in self.available_analytes 
+                              if f"{g}_min" in df.columns or f"{g}_max" in df.columns or f"{g}_mean" in df.columns]
         else:
             selected_analytes = self.filter_summary.get("selected_analytes", self.available_analytes)
             valid_analytes = [g for g in selected_analytes if g in df.columns]
-            
+
+        # ✅ 3. CALL THE SHARED FUNCTION
+        from datamanagement.grouping import calculate_summary_dataframe
+        summary_df = calculate_summary_dataframe(df, group_col, valid_analytes, is_exposure)
+
         self.summary_table.setHorizontalHeaderLabels([group_by_label, "Analyte", "Minimum", "Maximum", "Mean", "Count"])
         
-        if group_col in df.columns:
-            groups = df[group_col].dropna().unique()
-            groups = sorted(groups, key=lambda x: str(x))
-        else:
-            groups = ["All"]
-            
+        # 4. Convert DataFrame to the tuple format expected by the UI rendering & export
         rows_data = []
-        for group_val in groups:
-            if group_col in df.columns:
-                group_df = df[df[group_col] == group_val]
-            else:
-                group_df = df
-                
-            for analyte in valid_analytes:
-                if is_exposure:
-                    min_col = f"{analyte}_min"
-                    max_col = f"{analyte}_max"
-                    mean_col = f"{analyte}_mean"
-                    
-                    min_v = group_df[min_col].iloc[0] if min_col in group_df.columns and not group_df[min_col].empty else np.nan
-                    max_v = group_df[max_col].iloc[0] if max_col in group_df.columns and not group_df[max_col].empty else np.nan
-                    mean_v = group_df[mean_col].iloc[0] if mean_col in group_df.columns and not group_df[mean_col].empty else np.nan
-                    count_val = len(group_df)
-                    
-                    if pd.notna(min_v) or pd.notna(max_v) or pd.notna(mean_v):
-                        dec_pls = self.analyte_dec_pls.get(analyte, 2)
-                        rows_data.append((
-                            str(group_val), analyte,
-                            float(min_v) if pd.notna(min_v) else np.nan,
-                            float(max_v) if pd.notna(max_v) else np.nan,
-                            float(mean_v) if pd.notna(mean_v) else np.nan,
-                            int(count_val), dec_pls
-                        ))
-                else:
-                    if analyte in group_df.columns:
-                        analyte_data = group_df[analyte].dropna()
-                        count_val = len(analyte_data)
-                        if count_val > 0:
-                            min_val = analyte_data.min()
-                            max_val = analyte_data.max()
-                            mean_val = analyte_data.mean()
-                            dec_pls = self.analyte_dec_pls.get(analyte, 2)
-                            rows_data.append((
-                                str(group_val), analyte,
-                                float(min_val), float(max_val), float(mean_val),
-                                int(count_val), dec_pls
-                            ))
-                            
+        for _, row in summary_df.iterrows():
+            dec_pls = self.analyte_dec_pls.get(row['Analyte'], 2)
+            rows_data.append((
+                row['Group'], row['Analyte'],
+                row['Min'], row['Max'], row['Mean'],
+                int(row['Count']), dec_pls
+            ))
+            
+        self.summary_data = rows_data  # Keep for export/chart compatibility
+
+        # --- UI Rendering Loop (Remains exactly the same) ---
         self.summary_table.setSortingEnabled(False)
         self.summary_table.setRowCount(len(rows_data))
-        
-        # Use base class method to get active thresholds
         active_thresholds = self.get_active_thresholds()
+        
         for row, (grp, analyte, min_v, max_v, mean_v, count_v, dec_pls) in enumerate(rows_data):
             self.summary_table.setItem(row, 0, QTableWidgetItem(grp))
             self.summary_table.setItem(row, 1, QTableWidgetItem(analyte))
@@ -178,6 +146,32 @@ class SummaryTableView(DataView):
             if pd.notna(mean_v) and self._is_value_exceeding_threshold(analyte, mean_v, active_thresholds):
                 mean_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
             self.summary_table.setItem(row, 4, mean_item)
+            
+            self.summary_table.setItem(row, 5, NumericTableWidgetItem(str(count_v)))
+            
+        self.summary_table.setSortingEnabled(True)
+        self.summary_table.setRowCount(len(rows_data))
+        
+        # Use base class method to get active thresholds
+        active_thresholds = self.get_active_thresholds()
+        for row, (grp, analyte, min_v, max_v, mean_v, count_v, dec_pls) in enumerate(rows_data):
+            self.summary_table.setItem(row, 0, QTableWidgetItem(grp))
+            self.summary_table.setItem(row, 1, QTableWidgetItem(analyte))
+            
+            mean_item = NumericTableWidgetItem(f"{mean_v:.{dec_pls}f}" if pd.notna(mean_v) else "")
+            if pd.notna(mean_v) and self._is_value_exceeding_threshold(analyte, mean_v, active_thresholds):
+                mean_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
+            self.summary_table.setItem(row, 2, mean_item)
+            
+            max_item = NumericTableWidgetItem(f"{max_v:.{dec_pls}f}" if pd.notna(max_v) else "")
+            if pd.notna(max_v) and self._is_value_exceeding_threshold(analyte, max_v, active_thresholds):
+                max_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
+            self.summary_table.setItem(row, 3, max_item)
+            
+            min_item = NumericTableWidgetItem(f"{min_v:.{dec_pls}f}" if pd.notna(min_v) else "")
+            if pd.notna(min_v) and self._is_value_exceeding_threshold(analyte, min_v, active_thresholds):
+                min_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
+            self.summary_table.setItem(row, 4, min_item)
             
             self.summary_table.setItem(row, 5, NumericTableWidgetItem(str(count_v)))
             
@@ -202,3 +196,5 @@ class SummaryTableView(DataView):
             return value < threshold
         else:
             return value > threshold
+
+

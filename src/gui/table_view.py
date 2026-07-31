@@ -277,10 +277,25 @@ class TableView(DataView):
         if self.model is None:
             self.model = PaginatedTableModel(dec_pls_dict=self.analyte_dec_pls, page_size=100)
             self.table_view.setModel(self.model)
-
+        
         # Reorder columns before passing to model
         reordered_data = self._reorder_columns(self.filtered_data)
-
+        
+        # ✅ NEW: Drop columns that are completely empty (all NaN or empty strings)
+        if reordered_data is not None and not reordered_data.empty:
+            # Protect core metadata columns from being dropped
+            protected_cols = ['LOG TIME', 'SITE', 'DEVICE']
+            
+            # Temporarily replace empty/whitespace-only strings with NaN
+            temp_df = reordered_data.replace(r'^\s*$', np.nan, regex=True)
+            
+            # Find columns that have at least one non-NaN value
+            valid_cols = temp_df.dropna(axis=1, how='all').columns
+            
+            # Ensure protected columns are kept even if they are somehow empty
+            cols_to_keep = [col for col in reordered_data.columns if col in valid_cols or col in protected_cols]
+            reordered_data = reordered_data[cols_to_keep]
+        
         # Use base class state
         show_invalid_bg = not self.filter_summary.get("only_valid", False)
         self.model.set_show_invalid_bg(show_invalid_bg)
