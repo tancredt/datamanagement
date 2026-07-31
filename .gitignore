@@ -1,25 +1,32 @@
 ```
-incidents/
-env/
-*.py~
-
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.py~
+*.pyc~
 
-# IDE
-.vscode/
-.idea/
-
-# Logs
-*.log
+# Backup files
+*~
 
 # Environment
 .env
 .env.local
-*.env.*
+.env.*
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Dependencies
 venv/
@@ -30,18 +37,4 @@ node_modules/
 dist/
 build/
 target/
-
-# Coverage
-.coverage
-coverage/
-htmlcov/
-
-# Temporary files
-*.tmp
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
 ```
