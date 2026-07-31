@@ -34,7 +34,7 @@ class ObjectivesMixin:
                 INSERT INTO objective 
                 (zone, objective, strategy, conclusion, created_at, updated_at)
                 VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-            """, (data['zone'], data['objective'], data['strategy'], data['conclusion']))
+            """, (data.get('zone'), data.get('objective'), data.get('strategy'), data.get('conclusion')))
             obj_id = cursor.lastrowid
             
             for obs in data.get('observations', []):

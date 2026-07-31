@@ -94,7 +94,6 @@ def read_area_data(incident_path, start_time=None, stop_time=None, devices=None,
         LEFT JOIN device d ON ar.device_id = d.id
         LEFT JOIN area_reading_analyte ara ON ar.id = ara.area_reading_id
         LEFT JOIN analyte a ON ara.analyte_id = a.id
-        LEFT JOIN area_location al ON ar.device_id = al.device_id 
             AND ar.timestamp > al.start_dt 
             AND (al.stop_dt IS NULL OR ar.timestamp <= al.stop_dt)
         LEFT JOIN marker m ON al.marker_id = m.id
@@ -217,7 +216,7 @@ def read_spot_data(incident_path, start_time=None, stop_time=None, devices=None,
         
     if devices:
         placeholders = ','.join(['?'] * len(devices))
-        query += f" AND d.label IN ({placeholders})"
+        query += f" AND (d.label IS NULL OR d.label IN ({placeholders}))"
         params.extend(devices)
         
     query, params = _apply_site_filter(query, params, sites)
@@ -353,10 +352,6 @@ def read_exposure_data(incident_path, start_time=None, stop_time=None, devices=N
         query += " AND e.start_dt <= ?"
         params.append(_prepare_time_param(stop_time))
         
-
-        params.extend(devices)
-        
-    # ... (inside read_exposure_data)
     if analytes:
         placeholders = ','.join(['?'] * len(analytes))
         query += f" AND a.label IN ({placeholders})"
@@ -370,9 +365,9 @@ def read_exposure_data(incident_path, start_time=None, stop_time=None, devices=N
     query += " ORDER BY e.start_dt DESC"
     
     with db.get_connection() as conn:
-        conn.set_trace_callback(print)
+        #conn.set_trace_callback(print)
         rows = conn.execute(query, params).fetchall()
-        conn.set_trace_callback(None)
+        #conn.set_trace_callback(None)
         
     exposures_dict = {}
     for row in rows:

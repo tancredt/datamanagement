@@ -1,7 +1,9 @@
 """Database connection, setup, and schema initialization."""
 import os
+import json
 import sqlite3
 import logging
+
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,8 @@ class DatabaseConnection:
         with self.get_connection() as conn:
             with open(sql_path, 'r', encoding='utf-8') as f:
                 conn.executescript(f.read())
+
+    def _populate_analytes(self):
         """Reads static/lists/analytes.json and inserts into the analyte table."""
         analytes_path = os.path.join(PROJECT_ROOT, 'static', 'lists', 'analytes.json')
         if not os.path.exists(analytes_path):

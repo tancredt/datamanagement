@@ -79,27 +79,25 @@ def _apply_site_filter(query, params, sites):
 # 2. AREA DATA (Reads from DB with Filters)
 # ==========================================
 def read_area_data(incident_path, start_time=None, stop_time=None, devices=None, sites=None, analytes=None, only_valid=False):
-    """
-    Queries the area_reading tables and returns a standardized DataFrame.
-    Supports pre-filtering by time, devices, sites, analytes, and validity.
-    """
     db = IncidentDatabase(incident_path)
+    
+    # ✅ FIXED: Join directly to marker using the synced marker_id. 
+    # No more runtime timestamp math against area_location.
     query = """
-        SELECT ar.timestamp AS logtime, d.label AS device, 
-               ar.status, ar.battery, ar.latitude, ar.longitude,
-               m.label AS site,
-               a.label AS analyte, ara.value, 
-               COALESCE(ara.invalidation_id, 0) AS invalid_flag
-        FROM area_reading ar
-        LEFT JOIN device d ON ar.device_id = d.id
-        LEFT JOIN area_reading_analyte ara ON ar.id = ara.area_reading_id
-        LEFT JOIN analyte a ON ara.analyte_id = a.id
-        LEFT JOIN area_location al ON ar.device_id = al.device_id 
-            AND ar.timestamp > al.start_dt 
-            AND (al.stop_dt IS NULL OR ar.timestamp <= al.stop_dt)
-        LEFT JOIN marker m ON al.marker_id = m.id
-        WHERE 1=1
+    SELECT ar.timestamp AS logtime, d.label AS device,
+           ar.status, ar.battery, ar.latitude, ar.longitude,
+           m.label AS site,
+           a.label AS analyte, ara.value,
+           COALESCE(ara.invalidation_id, 0) AS invalid_flag
+    FROM area_reading ar
+    LEFT JOIN device d ON ar.device_id = d.id
+    LEFT JOIN area_reading_analyte ara ON ar.id = ara.area_reading_id
+    LEFT JOIN analyte a ON ara.analyte_id = a.id
+    LEFT JOIN marker m ON ar.marker_id = m.id
+    WHERE 1=1
     """
+    # ... (the rest of the parameter building remains exactly the same) ...
+    
     params = []
     
     if start_time:

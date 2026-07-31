@@ -21,7 +21,7 @@ class ExposureMixin:
         with self.get_connection() as conn:
             exp_rows = conn.execute("""
                 SELECT id, identifier, start_dt, stop_dt, area, activities, 
-                       respiratory, clothing, footwear, device_id 
+                       respiratory, clothing, footwear  
                 FROM exposure 
                 ORDER BY start_dt DESC
             """).fetchall()
@@ -66,9 +66,8 @@ class ExposureMixin:
                 
                 exposures.append(exp_dict)
             
-            return exposures
-
-    # pylint: disable=too-many-locals
+        return exposures
+        
     def add_exposure(self, data, analyte_lookup):
         """Adds a new exposure monitoring session."""
         identifier = data.get("id")
@@ -100,8 +99,8 @@ class ExposureMixin:
             exposure_id = conn.execute("""
                 INSERT INTO exposure 
                 (identifier, start_dt, stop_dt, area, activities, respiratory, 
-                 clothing, footwear, device_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 clothing, footwear)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (identifier, start_dt, stop_dt, area, activities, respiratory, 
                   clothing, footwear, device_id)).lastrowid
             
@@ -164,10 +163,10 @@ class ExposureMixin:
             conn.execute("""
                 UPDATE exposure 
                 SET identifier=?, start_dt=?, stop_dt=?, area=?, activities=?, 
-                    respiratory=?, clothing=?, footwear=?, device_id=? 
+                    respiratory=?, clothing=?, footwear=? 
                 WHERE id=?
             """, (identifier, start_dt, stop_dt, area, activities, respiratory, 
-                  clothing, footwear, device_id, old_exposure_id))
+                  clothing, footwear, old_exposure_id))
             
             for analyte_label, stats in values.items():
                 if analyte_label in analyte_lookup:

@@ -115,13 +115,7 @@ def aggregate_data(df, interval, group_by, data_type="area"):
     # STEP 4: Cleanup
     # Drop Lat/Lon as they are not meaningful for aggregated time bins
     res_agg = res_agg.drop(columns=['Latitude', 'Longitude'], errors='ignore')
-    
-    # Drop the non-grouped location identifier to keep tables clean
-    if group_by == 'Device':
-        res_agg = res_agg.drop(columns=['SITE'], errors='ignore')
-    elif group_by == 'Site':
-        res_agg = res_agg.drop(columns=['DEVICE'], errors='ignore')
-        
+            
     return res_agg
 
 
@@ -359,3 +353,68 @@ def get_data_overview(incident_path, data_type):
         "analytes_count": analytes
     }
 
+# Add this to the bottom of grouping.py
+
+def calculate_summary_dataframe(df, group_col, valid_analytes, is_exposure=False):
+    """
+    Calculates summary statistics (Min, Max, Mean, Count) for each analyte, 
+    grouped by the specified column.
+    
+    Args:
+        df: The filtered (and optionally time-aggregated) Pandas DataFrame.
+        group_col: The column to group by ('SITE', 'DEVICE', or 'IDENTIFIER').
+        valid_analytes: List of analyte labels to calculate stats for.
+        is_exposure: Boolean indicating if the data is exposure type.
+        
+    Returns:
+        A Pandas DataFrame with columns: ['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count']
+    """
+    if df is None or df.empty or not valid_analytes:
+        return pd.DataFrame(columns=['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count'])
+
+    # Ensure the group column exists, fallback if necessary
+    if group_col not in df.columns:
+        group_col = 'DEVICE' if 'DEVICE' in df.columns else 'SITE'
+
+    rows = []
+    groups = df[group_col].dropna().unique()
+    groups = sorted(groups, key=lambda x: str(x))
+    
+    for group_val in groups:
+        group_df = df[df[group_col] == group_val]
+        
+        for analyte in valid_analytes:
+            if is_exposure:
+                min_col = f"{analyte}_min"
+                max_col = f"{analyte}_max"
+                mean_col = f"{analyte}_mean"
+                
+                min_v = group_df[min_col].iloc[0] if min_col in group_df.columns and not group_df[min_col].empty else np.nan
+                max_v = group_df[max_col].iloc[0] if max_col in group_df.columns and not group_df[max_col].empty else np.nan
+                mean_v = group_df[mean_col].iloc[0] if mean_col in group_df.columns and not group_df[mean_col].empty else np.nan
+                count_val = len(group_df)
+                
+                if pd.notna(min_v) or pd.notna(max_v) or pd.notna(mean_v):
+                    rows.append({
+                        'Group': str(group_val),
+                        'Analyte': analyte,
+                        'Min': float(min_v) if pd.notna(min_v) else np.nan,
+                        'Max': float(max_v) if pd.notna(max_v) else np.nan,
+                        'Mean': float(mean_v) if pd.notna(mean_v) else np.nan,
+                        'Count': int(count_val)
+                    })
+            else:
+                if analyte in group_df.columns:
+                    analyte_data = group_df[analyte].dropna()
+                    count_val = len(analyte_data)
+                    if count_val > 0:
+                        rows.append({
+                            'Group': str(group_val),
+                            'Analyte': analyte,
+                            'Min': float(analyte_data.min()),
+                            'Max': float(analyte_data.max()),
+                            'Mean': float(analyte_data.mean()),
+                            'Count': int(count_val)
+                        })
+                        
+    return pd.DataFrame(rows, columns=['Group', 'Analyte', 'Min', 'Max', 'Mean', 'Count'])

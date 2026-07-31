@@ -108,8 +108,7 @@ CREATE TABLE exposure (
     activities TEXT,
     respiratory VARCHAR(16),
     clothing VARCHAR(16),
-    footwear VARCHAR(16),
-    FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE
+    footwear VARCHAR(16)
 );
 
 -- Summary readings for exposure sessions
@@ -158,14 +157,14 @@ CREATE TABLE observation(
 CREATE TABLE area_reading (
     id INTEGER PRIMARY KEY ASC,
     timestamp TEXT NOT NULL,
-    marker_id INTEGER NOT NULL,
+    marker_id INTEGER,
     status VARCHAR(16),
     battery REAL,
     latitude REAL,
     longitude REAL,
     device_id INTEGER NOT NULL,
     UNIQUE(timestamp, device_id),
-    FOREIGN KEY (marker_id) REFERENCES marker (id) ON DELETE CASCADE,
+    FOREIGN KEY (marker_id) REFERENCES marker (id) ON DELETE SET NULL,
     FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE
 );
 
@@ -217,7 +216,6 @@ CREATE INDEX idx_area_location_start_dt ON area_location(start_dt);
 CREATE INDEX idx_area_location_stop_dt ON area_location(stop_dt);
 CREATE INDEX idx_area_location_marker ON area_location(marker_id);
 CREATE INDEX idx_exposure_start_dt ON exposure(start_dt);
-CREATE INDEX idx_exposure_device ON exposure(device_id);
 CREATE INDEX idx_exposure_reading_exposure ON exposure_reading(exposure_id);
 CREATE INDEX idx_exposure_reading_analyte ON exposure_reading(analyte_id);
 CREATE INDEX idx_spectral_result_timestamp ON spectral_result(timestamp);
