@@ -410,7 +410,7 @@ class MapEditorDialog(QDialog):
                 return
             
             # Check if marker label exists globally (in marker table) but on a different map
-            all_marker_labels = self.db.get_current_marker_labels()
+            all_marker_labels = set(self.db.get_markers())
             if new_label in all_marker_labels:
                 reply = QMessageBox.question(
                     self,
