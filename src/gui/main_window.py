@@ -7,7 +7,7 @@ import datetime
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStatusBar, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QDialog, QFileDialog, QMessageBox, QProgressDialog,
-    QDockWidget, QButtonGroup, QPushButton, QGroupBox, QComboBox
+    QDockWidget, QButtonGroup, QPushButton, QGroupBox, QComboBox, QStackedWidget
 )
 from PySide6.QtGui import QKeySequence
 from PySide6.QtCore import Qt, Slot, QThread, Signal, QObject
@@ -541,12 +541,16 @@ class DataAnalyzerGUI(QMainWindow):
             lbl.setText(text)
 
     def _refresh_current_view(self):
-        """Refreshes the currently active view by destroying and recreating it.
+        """Refreshes the currently active view by destroying and recreating all views.
         
         This is called when underlying data changes (imports, updates, etc).
+        Views are destroyed when:
+        - data_type changes (Spot → Area → Spectral, etc.)
+        - filters are updated via the Filter dialog
+        - data is modified (imports, location updates, validations, maps, etc.)
         """
-        # Clear all views from the stack
-        self._clear_current_view(clear_cache=True)
+        self._clear_current_view()
+        
         # Reload the current view
         current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
         self._load_view(current_idx)
@@ -554,15 +558,14 @@ class DataAnalyzerGUI(QMainWindow):
     # ─────────────────────────────────────────────────────────
     # DYNAMIC VIEW ENGINE
     # ─────────────────────────────────────────────────────────
-    def _clear_current_view(self, clear_cache=False):
+    def _clear_current_view(self):
         """Destroys all views in the stack when data_type changes or filters update.
         
-        Args:
-            clear_cache: If True, clears all views (used when data_type changes or filters update)
+        QStackedWidget automatically caches/preserves views when switching between them.
+        Views are only destroyed when:
+        - data_type changes (Spot → Area → Spectral, etc.)
+        - filters are updated via the Filter dialog
         """
-        if not clear_cache:
-            return  # No-op when just switching views - QStackedWidget handles show/hide
-            
         import matplotlib.pyplot as plt
         
         # Clear entire stack and destroy all widgets
@@ -632,8 +635,8 @@ class DataAnalyzerGUI(QMainWindow):
 
         self.data_type = new_data_type
 
-        # Clear all cached views when data_type changes
-        self._clear_current_view(clear_cache=True)
+        # Clear all views when data_type changes
+        self._clear_current_view()
 
         # Update nav button constraints
         constraints = VIEW_CONSTRAINTS.get(self.data_type, VIEW_CONSTRAINTS["area"])
@@ -689,8 +692,8 @@ class DataAnalyzerGUI(QMainWindow):
         )
         
         if dialog.exec() == QDialog.Accepted:
-            # Clear all cached views when filters change (views need to reload with new filters)
-            self._clear_current_view(clear_cache=True)
+            # Clear all views when filters change (views need to reload with new filters)
+            self._clear_current_view()
             
             # Reload current view with fresh data
             current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
