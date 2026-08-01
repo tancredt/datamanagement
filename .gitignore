@@ -15,15 +15,17 @@ dist/
 venv/
 env/
 .env
+.env.local
+.env.*
 
-# Logs
-*.log
-
-# Editor
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# Logs
+*.log
 
 # OS
 .DS_Store
