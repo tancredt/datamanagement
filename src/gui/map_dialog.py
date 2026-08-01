@@ -555,7 +555,7 @@ class MapEditorDialog(QDialog):
     def _on_delete_marker(self, idx):
         reply = QMessageBox.warning(
             self, "Confirm Deletion",
-            f"Delete marker '{self.canvas.markers[idx]['label']}'?\nThis will erase all data associated with this location.",
+            f"Delete marker '{self.canvas.markers[idx]['label']}' from this map?\nThis will remove the marker from the current map only.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         if reply == QMessageBox.Yes:
@@ -563,13 +563,12 @@ class MapEditorDialog(QDialog):
             del self.canvas.markers[idx]
             self.canvas.update()
             
-            # Delete from DB (cascades to all map placements)
-            self.db.delete_marker(label_to_delete)
+            # Delete only from sitemap_marker for the current map (not from marker table)
+            if self.current_map_file:
+                self.db.remove_marker_from_map(label_to_delete, self.current_map_file)
             
             # Update local cache
-            if self.current_map_file:
-                self.maps_data[self.current_map_file] = list(self.canvas.markers)
-
+            self.maps_data[self.current_map_file] = list(self.canvas.markers)
     def _on_export_map(self):
         if not self.current_map_file:
             QMessageBox.warning(self, "No Map", "Please select a map to export.")
