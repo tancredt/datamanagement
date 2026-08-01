@@ -7,7 +7,7 @@ import datetime
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStatusBar, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QDialog, QFileDialog, QMessageBox, QProgressDialog,
-    QStackedWidget, QDockWidget, QButtonGroup, QPushButton, QGroupBox, QComboBox
+    QDockWidget, QButtonGroup, QPushButton, QGroupBox, QComboBox
 )
 from PySide6.QtGui import QKeySequence
 from PySide6.QtCore import Qt, Slot, QThread, Signal, QObject
@@ -148,7 +148,8 @@ class DataAnalyzerGUI(QMainWindow):
                 btn.setChecked(False)
             # ==========================================
             
-            self.central_stack.setCurrentIndex(1)
+            self.data_page.show()
+            self.welcome_page.hide()
             self.data_type_combo.blockSignals(True)
             self.data_type_combo.setCurrentText("Spot Readings")
             self.data_type_combo.blockSignals(False)
@@ -181,21 +182,26 @@ class DataAnalyzerGUI(QMainWindow):
         for btn in self.nav_btns.values():
             btn.setEnabled(has_incident)
             
-        # Show/hide the dock and reset the central stack
+        # Show/hide the dock and reset the central widget visibility
         if has_incident:
             self.dock.show()
             self.action_toggle_dock.setChecked(True)
         else:
             self.dock.hide()
             self.action_toggle_dock.setChecked(False)
-            self.central_stack.setCurrentIndex(0)
+            self.data_page.hide()
+            self.welcome_page.show()
 
     # ─────────────────────────────────────────────────────────
     # UI SETUP
     # ─────────────────────────────────────────────────────────
     def _setup_ui(self):
-        self.central_stack = QStackedWidget()
-        self.setCentralWidget(self.central_stack)
+        # Use a simple QWidget as central widget instead of QStackedWidget
+        # since we only have two states (welcome/data) which can be handled by showing/hiding widgets
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        self.central_layout = QVBoxLayout(central_widget)
+        self.central_layout.setContentsMargins(0, 0, 0, 0)
 
         self.welcome_page = QWidget()
         welcome_layout = QVBoxLayout(self.welcome_page)
@@ -203,7 +209,7 @@ class DataAnalyzerGUI(QMainWindow):
         self.info_label.setAlignment(Qt.AlignCenter)
         self.info_label.setStyleSheet("font-size: 18px; color: #6b7280;")
         welcome_layout.addWidget(self.info_label)
-        self.central_stack.addWidget(self.welcome_page)
+        self.central_layout.addWidget(self.welcome_page)
 
         self.data_page = QWidget()
         data_layout = QVBoxLayout(self.data_page)
@@ -211,7 +217,8 @@ class DataAnalyzerGUI(QMainWindow):
         
         self.view_stack = QStackedWidget()
         data_layout.addWidget(self.view_stack)
-        self.central_stack.addWidget(self.data_page)
+        self.central_layout.addWidget(self.data_page)
+        self.data_page.hide()  # Initially hide the data page
 
         self.dock = QDockWidget("Data Controls", self)
         self.dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
@@ -534,38 +541,55 @@ class DataAnalyzerGUI(QMainWindow):
             lbl.setText(text)
 
     def _refresh_current_view(self):
-        """Helper to refresh the currently active view in the stack."""
-        current_widget = self.view_stack.currentWidget()
-        if current_widget and hasattr(current_widget, 'refresh'):
-            current_widget.refresh()
+        """Refreshes the currently active view by destroying and recreating all views.
+        
+        This is called when underlying data changes (imports, updates, etc).
+        Views are destroyed when:
+        - data_type changes (Spot → Area → Spectral, etc.)
+        - filters are updated via the Filter dialog
+        - data is modified (imports, location updates, validations, maps, etc.)
+        """
+        self._clear_current_view()
+        
+        # Reload the current view
+        current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
+        self._load_view(current_idx)
             
     # ─────────────────────────────────────────────────────────
     # DYNAMIC VIEW ENGINE
     # ─────────────────────────────────────────────────────────
     def _clear_current_view(self):
-        """Safely removes and destroys the currently active view in the stack."""
-        import matplotlib.pyplot as plt  # ✅ Import pyplot for cleanup
+        """Destroys all views in the stack when data_type changes or filters update.
         
+        QStackedWidget automatically caches/preserves views when switching between them.
+        Views are only destroyed when:
+        - data_type changes (Spot → Area → Spectral, etc.)
+        - filters are updated via the Filter dialog
+        """
+        import matplotlib.pyplot as plt
+        
+        # Clear entire stack and destroy all widgets
         while self.view_stack.count() > 0:
             w = self.view_stack.widget(0)
             self.view_stack.removeWidget(w)
-            
-            # ✅ FIX: Safely close matplotlib figures to prevent Qt backend crashes
             if hasattr(w, 'figure'):
                 try: plt.close(w.figure)
                 except Exception: pass
             if hasattr(w, 'summary_figure'):
                 try: plt.close(w.summary_figure)
                 except Exception: pass
-                
             w.deleteLater()
 
     def _load_view(self, index):
-        """Instantiates the requested view and displays it."""
-        self._clear_current_view()
+        """Instantiates the requested view and displays it.
+        
+        QStackedWidget automatically preserves views when switching between them.
+        Views are only destroyed when data_type changes or filters update.
+        """
         if not self.active_incident_path:
             return
         
+        # Create new view
         view = None
         if index == 0:
             view = TableView(incident_path=self.active_incident_path, data_type=self.data_type, parent=self)
@@ -611,6 +635,9 @@ class DataAnalyzerGUI(QMainWindow):
 
         self.data_type = new_data_type
 
+        # Clear all views when data_type changes
+        self._clear_current_view()
+
         # Update nav button constraints
         constraints = VIEW_CONSTRAINTS.get(self.data_type, VIEW_CONSTRAINTS["area"])
         enabled_indices = constraints["enabled"]
@@ -624,7 +651,7 @@ class DataAnalyzerGUI(QMainWindow):
         
         self.nav_btns[target_idx].setChecked(True)
         
-        # Reload the current view with the new data type
+        # Load the view with the new data type (will create fresh view since cache was cleared)
         self._load_view(target_idx)
         
         # Update filter summary labels from file
@@ -665,14 +692,12 @@ class DataAnalyzerGUI(QMainWindow):
         )
         
         if dialog.exec() == QDialog.Accepted:
-            # Refresh the current view (it will reload filters from disk)
-            current_widget = self.view_stack.currentWidget()
-            if hasattr(current_widget, 'refresh'):
-                current_widget.refresh()
-            else:
-                # Fallback: just reload the view entirely
-                current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
-                self._load_view(current_idx)
+            # Clear all views when filters change (views need to reload with new filters)
+            self._clear_current_view()
+            
+            # Reload current view with fresh data
+            current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
+            self._load_view(current_idx)
             
             # Update filter summary labels from file
             self._update_filter_summary_labels()
@@ -768,13 +793,8 @@ class DataAnalyzerGUI(QMainWindow):
             return
         dialog = MapEditorDialog(self, self.active_incident_path)
         if dialog.exec() == QDialog.Accepted:
-            # Refresh current view so it picks up new maps
-            current_widget = self.view_stack.currentWidget()
-            if hasattr(current_widget, 'refresh'):
-                current_widget.refresh()
-            else:
-                current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
-                self._load_view(current_idx)
+            # Refresh current view so it picks up new maps - clear cache since map data changed
+            self._refresh_current_view()
 
     @Slot()
     def _on_spot_readings(self):
@@ -943,9 +963,8 @@ class DataAnalyzerGUI(QMainWindow):
             )
             self._update_status_bar(f"✅ Area data processed ({row_count} rows).")
             
-            current_widget = self.view_stack.currentWidget()
-            if current_widget and hasattr(current_widget, 'refresh'):
-                current_widget.refresh()
+            # Clear all cached views and reload since new area data was imported
+            self._refresh_current_view()
         else:
             QMessageBox.warning(self, "Processing Issue", "No new data was processed. Check if CSV files were valid or already imported.")
             self._update_status_bar("⚠️ No new data processed.")
