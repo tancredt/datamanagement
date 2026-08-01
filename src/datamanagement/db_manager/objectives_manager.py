@@ -1,5 +1,4 @@
 import os
-import shutil
 import logging
 
 logger = logging.getLogger(__name__)

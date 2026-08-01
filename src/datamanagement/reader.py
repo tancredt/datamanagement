@@ -35,9 +35,9 @@ def _apply_corrections(df, incident_path):
         return df
     for col in df.columns:
         col_lower = str(col).lower()
-        if col_lower == 'voc(ppm)' or col_lower.startswith('voc(ppm)_'):
+        if col_lower == 'voc(ppm)':
             df[col] = pd.to_numeric(df[col], errors='coerce') * voc_corr
-        elif col_lower == 'lel(%lel)' or col_lower.startswith('lel(%lel)_'):
+        elif col_lower == 'lel(%lel)':
             df[col] = pd.to_numeric(df[col], errors='coerce') * lel_corr
     return df
 
