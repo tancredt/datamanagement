@@ -7,7 +7,7 @@ import datetime
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStatusBar, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QDialog, QFileDialog, QMessageBox, QProgressDialog,
-    QDockWidget, QButtonGroup, QPushButton, QGroupBox, QComboBox
+    QDockWidget, QButtonGroup, QPushButton, QGroupBox, QComboBox, QStackedWidget
 )
 from PySide6.QtGui import QKeySequence
 from PySide6.QtCore import Qt, Slot, QThread, Signal, QObject
