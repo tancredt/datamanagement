@@ -58,12 +58,6 @@ class MapMarkerMixin:
             ).fetchall()
             return [row["file_name"] for row in rows]
 
-    def get_current_marker_labels(self):
-        """Returns set of all marker labels currently in use."""
-        with self.get_connection() as conn:
-            rows = conn.execute("SELECT label FROM marker").fetchall()
-            return {row["label"] for row in rows}
-
     def get_marker_labels_for_map(self, map_filename):
         """Returns set of marker labels placed on a specific map."""
         with self.get_connection() as conn:
@@ -79,7 +73,7 @@ class MapMarkerMixin:
 
     def get_next_marker_label(self):
         """Generates the next available alphabetical label (A, B, ..., Z, AA, AB, ...)."""
-        used_labels = self.get_current_marker_labels()
+        used_labels = set(self.get_markers())
         max_idx = -1
         
         for label in used_labels:

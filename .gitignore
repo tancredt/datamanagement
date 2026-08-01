@@ -1,1 +1,1 @@
-Nothing should be ignored based on the provided file changes. The modification of 'src/gui/map_dialog.py' is a source code file that should not be added to .gitignore.
+(src/datamanagement/db_manager/map_marker_manager.py)
