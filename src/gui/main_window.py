@@ -7,7 +7,7 @@ import datetime
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStatusBar, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QDialog, QFileDialog, QMessageBox, QProgressDialog,
-    QDockWidget, QButtonGroup, QPushButton, QGroupBox, QComboBox
+    QStackedWidget, QDockWidget, QButtonGroup, QPushButton, QGroupBox, QComboBox
 )
 from PySide6.QtGui import QKeySequence
 from PySide6.QtCore import Qt, Slot, QThread, Signal, QObject
@@ -148,8 +148,7 @@ class DataAnalyzerGUI(QMainWindow):
                 btn.setChecked(False)
             # ==========================================
             
-            self.data_page.show()
-            self.welcome_page.hide()
+            self.central_stack.setCurrentIndex(1)
             self.data_type_combo.blockSignals(True)
             self.data_type_combo.setCurrentText("Spot Readings")
             self.data_type_combo.blockSignals(False)
@@ -182,26 +181,21 @@ class DataAnalyzerGUI(QMainWindow):
         for btn in self.nav_btns.values():
             btn.setEnabled(has_incident)
             
-        # Show/hide the dock and reset the central widget visibility
+        # Show/hide the dock and reset the central stack
         if has_incident:
             self.dock.show()
             self.action_toggle_dock.setChecked(True)
         else:
             self.dock.hide()
             self.action_toggle_dock.setChecked(False)
-            self.data_page.hide()
-            self.welcome_page.show()
+            self.central_stack.setCurrentIndex(0)
 
     # ─────────────────────────────────────────────────────────
     # UI SETUP
     # ─────────────────────────────────────────────────────────
     def _setup_ui(self):
-        # Use a simple QWidget as central widget instead of QStackedWidget
-        # since we only have two states (welcome/data) which can be handled by showing/hiding widgets
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        self.central_layout = QVBoxLayout(central_widget)
-        self.central_layout.setContentsMargins(0, 0, 0, 0)
+        self.central_stack = QStackedWidget()
+        self.setCentralWidget(self.central_stack)
 
         self.welcome_page = QWidget()
         welcome_layout = QVBoxLayout(self.welcome_page)
@@ -209,7 +203,7 @@ class DataAnalyzerGUI(QMainWindow):
         self.info_label.setAlignment(Qt.AlignCenter)
         self.info_label.setStyleSheet("font-size: 18px; color: #6b7280;")
         welcome_layout.addWidget(self.info_label)
-        self.central_layout.addWidget(self.welcome_page)
+        self.central_stack.addWidget(self.welcome_page)
 
         self.data_page = QWidget()
         data_layout = QVBoxLayout(self.data_page)
@@ -217,8 +211,7 @@ class DataAnalyzerGUI(QMainWindow):
         
         self.view_stack = QStackedWidget()
         data_layout.addWidget(self.view_stack)
-        self.central_layout.addWidget(self.data_page)
-        self.data_page.hide()  # Initially hide the data page
+        self.central_stack.addWidget(self.data_page)
 
         self.dock = QDockWidget("Data Controls", self)
         self.dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
