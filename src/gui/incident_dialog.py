@@ -252,6 +252,34 @@ class IncidentDialog(QDialog):
                 with open(preferences_file, 'w', encoding='utf-8') as f:
                     json.dump(default_prefs, f, indent=2)
                 logger.info(f"Default preferences saved for: {label}")
+            
+            # 4. Create default last_filters.json
+            filters_file = os.path.join(meta_dir, "last_filters.json")
+            if not os.path.exists(filters_file):
+                from datetime import datetime, timedelta
+                now_py = datetime.now()
+                current_hour = now_py.replace(minute=0, second=0, microsecond=0)
+                previous_hour = current_hour - timedelta(hours=1)
+                
+                default_filters = {
+                    "start_time": previous_hour.isoformat(),
+                    "stop_time": current_hour.isoformat(),
+                    "interval": "Raw",
+                    "group_by": "Device",
+                    "only_valid": False,
+                    "selected_sites": [],
+                    "selected_area_devices": [],
+                    "selected_spot_devices": [],
+                    "selected_spectral_devices": [],
+                    "selected_exposure_identifiers": [],
+                    "selected_analytes": [],
+                    "threshold_level": None,
+                    "data_type": "area",
+                    "stats_pref": "Mean"
+                }
+                with open(filters_file, 'w', encoding='utf-8') as f:
+                    json.dump(default_filters, f, indent=2)
+                logger.info(f"Default last_filters.json saved for: {label}")
         
         except Exception as e:
             QMessageBox.critical(self, "File System Error", f"Failed to save incident metadata:\n{e}")
