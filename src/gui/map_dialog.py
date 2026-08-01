@@ -125,16 +125,8 @@ class MarkerInfoDialog(QDialog):
             QMessageBox.warning(self, "Validation Error", "Label must contain only letters, numbers, and underscores.")
             return
 
-        if not self.is_edit and new_label in self.current_map_labels:
-            reply = QMessageBox.warning(
-                self, 
-                "Duplicate Label", 
-                "A marker with this label already exists. If you do reuse this label, make sure it is in the same spot.",
-                QMessageBox.Ok | QMessageBox.Cancel, 
-                QMessageBox.Cancel
-            )
-            if reply != QMessageBox.Ok:
-                return
+        # No duplicate check here - it's handled by the parent dialog (_on_place_marker)
+        # before this dialog is even shown for new markers
 
         mode = self.coord_group.checkedId()
         self._lat, self._lon = None, None
@@ -211,15 +203,9 @@ class MapCanvas(QWidget):
             if self._pending_data and not self._is_dragging:
                 if 0 <= event.x() <= self.pixmap.width() and 0 <= event.y() <= self.pixmap.height():
                     x, y = int(event.x()), int(event.y())
-                    # Check if this is an existing marker being repositioned
-                    is_existing = getattr(self, '_pending_is_existing', False)
-                    
-                    if is_existing:
-                        # Update only the sitemap_marker table (position on map), skip marker table
-                        self.parent().update_existing_marker_position(self._pending_data['label'], x, y)
-                    else:
-                        # New marker - add to canvas and trigger save
-                        self.add_marker(x, y, self._pending_data)
+                    # Always add marker to canvas and trigger save
+                    # The _save_data method will handle adding new sitemap_marker entries
+                    self.add_marker(x, y, self._pending_data)
                     
                     self._pending_data = None
                     self._pending_is_existing = False
@@ -401,26 +387,25 @@ class MapEditorDialog(QDialog):
             QMessageBox.warning(self, "No Map", "Please add and select a map first.")
             return
         
-        # Query the DB for labels specifically on the CURRENT map
-        db_markers = self.db.get_markers_for_map(self.current_map_file)
-        current_map_labels = {m['label'] for m in db_markers}
+        # Query the DB for ALL existing marker labels (globally from marker table)
+        all_marker_labels = self.db.get_current_marker_labels()
         
         # Get the next available global label for the default suggestion
         next_label = self.db.get_next_marker_label()
         
-        dialog = MarkerInfoDialog(self, default_label=next_label, current_map_labels=current_map_labels)
+        dialog = MarkerInfoDialog(self, default_label=next_label, current_map_labels=all_marker_labels)
         if dialog.exec() == QDialog.Accepted:
             new_data = dialog.get_data()
             new_label = new_data["label"]
             
-            # Check if marker already exists on this map
-            if new_label in current_map_labels:
+            # Check if marker already exists globally in the marker table
+            if new_label in all_marker_labels:
                 reply = QMessageBox.question(
                     self,
-                    "Marker Already Exists",
-                    f"A marker with label '{new_label}' already exists on this map.\n\n"
-                    "Are you placing it in the same location? Click 'Yes' to confirm and update the position, "
-                    "or 'No' to cancel and choose a different label.",
+                    "Duplicate Label",
+                    f"A marker with label '{new_label}' already exists.\n\n"
+                    "The label must be positioned in the same location on this map.\n\n"
+                    "Click 'Yes' to proceed, or 'No' to cancel and choose a different label.",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No
                 )
@@ -429,11 +414,10 @@ class MapEditorDialog(QDialog):
                 
                 # User confirmed - set pending data and wait for click
                 self.canvas._pending_data = new_data
-                self.canvas._pending_is_existing = True
                 self.canvas.setCursor(Qt.CrossCursor)
                 return
             
-            # Insert the new marker into the database (INSERT OR IGNORE handles cross-map reuse)
+            # New marker - insert into marker table first
             self.db.add_marker(
                 label=new_label,
                 description=new_data.get("description", ""),
@@ -442,7 +426,6 @@ class MapEditorDialog(QDialog):
             )
             
             self.canvas._pending_data = new_data
-            self.canvas._pending_is_existing = False
             self.canvas.setCursor(Qt.CrossCursor)
 
     def _on_edit_marker(self, idx):
@@ -602,7 +585,7 @@ class MapEditorDialog(QDialog):
         # Update local cache
         self.maps_data[self.current_map_file] = list(self.canvas.markers)
         
-        # Sync placements to DB (UPSERT logic handles moves and new placements)
+        # Sync placements to DB - adds new sitemap_marker entries for each placement
         for m in self.canvas.markers:
             self.db.place_marker_on_map(
                 marker_label=m['label'],
@@ -610,44 +593,3 @@ class MapEditorDialog(QDialog):
                 x_coord=m['x'],
                 y_coord=m['y']
             )
-
-    def update_existing_marker_position(self, label, x, y):
-        """Updates only the sitemap_marker table for an existing marker (no changes to marker table)."""
-        if not self.current_map_file:
-            return
-        
-        # Find the marker in the current canvas markers
-        marker_found = None
-        for m in self.canvas.markers:
-            if m['label'] == label:
-                marker_found = m
-                break
-        
-        if marker_found:
-            # Update existing marker position on canvas
-            marker_found['x'] = x
-            marker_found['y'] = y
-        else:
-            # Add marker to canvas if not already there
-            db_markers = self.db.get_markers_for_map(self.current_map_file)
-            marker_data = next((m for m in db_markers if m['label'] == label), None)
-            if marker_data:
-                self.canvas.markers.append({
-                    'label': label,
-                    'description': marker_data.get('description', ''),
-                    'latitude': marker_data.get('latitude'),
-                    'longitude': marker_data.get('longitude'),
-                    'x': x,
-                    'y': y
-                })
-        
-        # Update local cache
-        self.maps_data[self.current_map_file] = list(self.canvas.markers)
-        
-        # Update only the sitemap_marker table (position on map)
-        self.db.place_marker_on_map(
-            marker_label=label,
-            map_filename=self.current_map_file,
-            x_coord=x,
-            y_coord=y
-        )

@@ -134,7 +134,11 @@ class MapMarkerMixin:
             conn.commit()
 
     def place_marker_on_map(self, marker_label, map_filename, x_coord, y_coord):
-        """Places a marker on a specific map with pixel coordinates."""
+        """Places a marker on a specific map with pixel coordinates.
+        
+        If the marker already exists on this map, adds a new entry to sitemap_marker
+        with the new position (allows multiple placements of same marker on same map).
+        """
         with self.get_connection() as conn:
             marker_row = conn.execute(
                 "SELECT id FROM marker WHERE label = ?", 
@@ -153,8 +157,6 @@ class MapMarkerMixin:
             conn.execute("""
                 INSERT INTO sitemap_marker (marker_id, sitemap_id, x_coord, y_coord)
                 VALUES (?, ?, ?, ?)
-                ON CONFLICT(marker_id, sitemap_id) DO UPDATE SET
-                    x_coord = excluded.x_coord, y_coord = excluded.y_coord
             """, (marker_row["id"], map_row["id"], x_coord, y_coord))
             conn.commit()
 
