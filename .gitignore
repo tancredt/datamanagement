@@ -5,6 +5,9 @@ __pycache__/
 *.pyo
 *.pyd
 
+# App
+incidents/
+
 # Build artifacts
 build/
 dist/
@@ -23,6 +26,8 @@ env/
 .idea/
 *.swp
 *.swo
+*.py~
+*#
 
 # Logs
 *.log
