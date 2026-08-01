@@ -20,9 +20,9 @@ CREATE TABLE sitemap_marker (
     sitemap_id INTEGER NOT NULL,
     x_coord INTEGER,
     y_coord INTEGER,
-    UNIQUE (marker_id, sitemap_id),
     FOREIGN KEY (marker_id) REFERENCES marker (id) ON DELETE CASCADE,
-    FOREIGN KEY (sitemap_id) REFERENCES sitemap (id) ON DELETE CASCADE
+    FOREIGN KEY (sitemap_id) REFERENCES sitemap (id) ON DELETE CASCADE,
+    UNIQUE (marker_id, sitemap_id)
 );
 
 -- Device table for monitoring equipment

@@ -125,16 +125,8 @@ class MarkerInfoDialog(QDialog):
             QMessageBox.warning(self, "Validation Error", "Label must contain only letters, numbers, and underscores.")
             return
 
-        if not self.is_edit and new_label in self.current_map_labels:
-            reply = QMessageBox.warning(
-                self, 
-                "Duplicate Label", 
-                "A marker with this label already exists. If you do reuse this label, make sure it is in the same spot.",
-                QMessageBox.Ok | QMessageBox.Cancel, 
-                QMessageBox.Cancel
-            )
-            if reply != QMessageBox.Ok:
-                return
+        # No duplicate check here - it's handled by the parent dialog (_on_place_marker)
+        # before this dialog is even shown for new markers
 
         mode = self.coord_group.checkedId()
         self._lat, self._lon = None, None
@@ -210,8 +202,13 @@ class MapCanvas(QWidget):
         if event.button() == Qt.LeftButton and self.pixmap and not self.pixmap.isNull():
             if self._pending_data and not self._is_dragging:
                 if 0 <= event.x() <= self.pixmap.width() and 0 <= event.y() <= self.pixmap.height():
-                    self.add_marker(event.x(), event.y(), self._pending_data)
+                    x, y = int(event.x()), int(event.y())
+                    # Always add marker to canvas and trigger save
+                    # The _save_data method will handle adding new sitemap_marker entries
+                    self.add_marker(x, y, self._pending_data)
+                    
                     self._pending_data = None
+                    self._pending_is_existing = False
                     self.setCursor(Qt.ArrowCursor)
                     self.marker_placed.emit()
                     return
@@ -390,9 +387,8 @@ class MapEditorDialog(QDialog):
             QMessageBox.warning(self, "No Map", "Please add and select a map first.")
             return
         
-        # ✅ Query the DB for labels specifically on the CURRENT map
-        db_markers = self.db.get_markers_for_map(self.current_map_file)
-        current_map_labels = {m['label'] for m in db_markers}
+        # Query the DB for marker labels on the CURRENT map only
+        current_map_labels = self.db.get_marker_labels_for_map(self.current_map_file)
         
         # Get the next available global label for the default suggestion
         next_label = self.db.get_next_marker_label()
@@ -402,18 +398,38 @@ class MapEditorDialog(QDialog):
             new_data = dialog.get_data()
             new_label = new_data["label"]
             
-            # ✅ Hard block if the DB confirms it's already on this map (Safety Net)
+            # Check if marker label already exists on THIS map
             if new_label in current_map_labels:
-                QMessageBox.critical(
+                QMessageBox.warning(
                     self,
-                    "Duplicate Marker",
-                    f"A marker with label '{new_label}' already exists on this map.\n"
-                    "Each label can only appear once per map.\n\n"
-                    "If you want to move the existing marker, right-click it and select 'Move'."
+                    "Duplicate Label",
+                    f"Each label can only appear once per map.\n\n"
+                    f"The label '{new_label}' is already used on this map.",
+                    QMessageBox.Ok
                 )
                 return
             
-            # Insert the new marker into the database (INSERT OR IGNORE handles cross-map reuse)
+            # Check if marker label exists globally (in marker table) but on a different map
+            all_marker_labels = set(self.db.get_markers())
+            if new_label in all_marker_labels:
+                reply = QMessageBox.question(
+                    self,
+                    "Existing Marker",
+                    f"A marker with label '{new_label}' already exists on another map.\n\n"
+                    "The label must be positioned in the same location on this map.\n\n"
+                    "Click 'Yes' to proceed, or 'No' to cancel and choose a different label.",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply != QMessageBox.Yes:
+                    return
+                
+                # User confirmed - set pending data and wait for click
+                self.canvas._pending_data = new_data
+                self.canvas.setCursor(Qt.CrossCursor)
+                return
+            
+            # New marker - insert into marker table first
             self.db.add_marker(
                 label=new_label,
                 description=new_data.get("description", ""),
@@ -539,7 +555,7 @@ class MapEditorDialog(QDialog):
     def _on_delete_marker(self, idx):
         reply = QMessageBox.warning(
             self, "Confirm Deletion",
-            f"Delete marker '{self.canvas.markers[idx]['label']}'?\nThis will erase all data associated with this location.",
+            f"Delete marker '{self.canvas.markers[idx]['label']}' from this map?\nThis will remove the marker from the current map only.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         if reply == QMessageBox.Yes:
@@ -547,13 +563,12 @@ class MapEditorDialog(QDialog):
             del self.canvas.markers[idx]
             self.canvas.update()
             
-            # Delete from DB (cascades to all map placements)
-            self.db.delete_marker(label_to_delete)
+            # Delete only from sitemap_marker for the current map (not from marker table)
+            if self.current_map_file:
+                self.db.remove_marker_from_map(label_to_delete, self.current_map_file)
             
             # Update local cache
-            if self.current_map_file:
-                self.maps_data[self.current_map_file] = list(self.canvas.markers)
-
+            self.maps_data[self.current_map_file] = list(self.canvas.markers)
     def _on_export_map(self):
         if not self.current_map_file:
             QMessageBox.warning(self, "No Map", "Please select a map to export.")
@@ -581,7 +596,7 @@ class MapEditorDialog(QDialog):
         # Update local cache
         self.maps_data[self.current_map_file] = list(self.canvas.markers)
         
-        # Sync placements to DB (UPSERT logic handles moves and new placements)
+        # Sync placements to DB - adds new sitemap_marker entries for each placement
         for m in self.canvas.markers:
             self.db.place_marker_on_map(
                 marker_label=m['label'],

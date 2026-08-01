@@ -58,15 +58,22 @@ class MapMarkerMixin:
             ).fetchall()
             return [row["file_name"] for row in rows]
 
-    def get_current_marker_labels(self):
-        """Returns set of all marker labels currently in use."""
+    def get_marker_labels_for_map(self, map_filename):
+        """Returns set of marker labels placed on a specific map."""
         with self.get_connection() as conn:
-            rows = conn.execute("SELECT label FROM marker").fetchall()
+            query = """
+                SELECT m.label
+                FROM marker m
+                JOIN sitemap_marker sm ON m.id = sm.marker_id
+                JOIN sitemap s ON sm.sitemap_id = s.id
+                WHERE s.file_name = ?
+            """
+            rows = conn.execute(query, (map_filename,)).fetchall()
             return {row["label"] for row in rows}
 
     def get_next_marker_label(self):
         """Generates the next available alphabetical label (A, B, ..., Z, AA, AB, ...)."""
-        used_labels = self.get_current_marker_labels()
+        used_labels = set(self.get_markers())
         max_idx = -1
         
         for label in used_labels:
@@ -133,8 +140,41 @@ class MapMarkerMixin:
             conn.execute("DELETE FROM marker WHERE label = ?", (label,))
             conn.commit()
 
+    def remove_marker_from_map(self, marker_label, map_filename):
+        """Removes a marker from a specific map without deleting it from the marker table.
+        
+        This only removes the entry from sitemap_marker, keeping the marker definition intact.
+        """
+        with self.get_connection() as conn:
+            # Get marker_id from label
+            marker_row = conn.execute(
+                "SELECT id FROM marker WHERE label = ?", (marker_label,)
+            ).fetchone()
+            
+            if marker_row:
+                marker_id = marker_row[0]
+                
+                # Get sitemap_id from filename
+                sitemap_row = conn.execute(
+                    "SELECT id FROM sitemap WHERE filename = ?", (map_filename,)
+                ).fetchone()
+                
+                if sitemap_row:
+                    sitemap_id = sitemap_row[0]
+                    
+                    # Delete only the association in sitemap_marker
+                    conn.execute(
+                        "DELETE FROM sitemap_marker WHERE marker_id = ? AND sitemap_id = ?",
+                        (marker_id, sitemap_id)
+                    )
+                    conn.commit()
+
     def place_marker_on_map(self, marker_label, map_filename, x_coord, y_coord):
-        """Places a marker on a specific map with pixel coordinates."""
+        """Places a marker on a specific map with pixel coordinates.
+        
+        If the marker already exists on this map, updates the existing entry
+        with the new position (enforces one marker per map).
+        """
         with self.get_connection() as conn:
             marker_row = conn.execute(
                 "SELECT id FROM marker WHERE label = ?", 
@@ -154,7 +194,8 @@ class MapMarkerMixin:
                 INSERT INTO sitemap_marker (marker_id, sitemap_id, x_coord, y_coord)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(marker_id, sitemap_id) DO UPDATE SET
-                    x_coord = excluded.x_coord, y_coord = excluded.y_coord
+                    x_coord = excluded.x_coord,
+                    y_coord = excluded.y_coord
             """, (marker_row["id"], map_row["id"], x_coord, y_coord))
             conn.commit()
 
