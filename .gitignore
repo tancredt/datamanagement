@@ -1,6 +1,9 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 (src/datamanagement/db_manager/map_marker_manager.py)
 =======
+=======
+>>>>>>> efffb4e0786df93c1ccd26a14a7267c39037f0d9
 ```python
 # Compiled Python files
 *.pyc
@@ -26,8 +29,11 @@ incidents/
 .env
 .env.local
 *.env.*
+<<<<<<< HEAD
 *.py~
 *#
+=======
+>>>>>>> efffb4e0786df93c1ccd26a14a7267c39037f0d9
 
 # Editors
 .vscode/
@@ -41,5 +47,9 @@ htmlcov/
 # Testing
 .pytest_cache/
 .mypy_cache/
+<<<<<<< HEAD
+```
+>>>>>>> efffb4e0786df93c1ccd26a14a7267c39037f0d9
+=======
 ```
 >>>>>>> efffb4e0786df93c1ccd26a14a7267c39037f0d9
