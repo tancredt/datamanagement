@@ -387,23 +387,35 @@ class MapEditorDialog(QDialog):
             QMessageBox.warning(self, "No Map", "Please add and select a map first.")
             return
         
-        # Query the DB for ALL existing marker labels (globally from marker table)
-        all_marker_labels = self.db.get_current_marker_labels()
+        # Query the DB for marker labels on the CURRENT map only
+        current_map_labels = self.db.get_marker_labels_for_map(self.current_map_file)
         
         # Get the next available global label for the default suggestion
         next_label = self.db.get_next_marker_label()
         
-        dialog = MarkerInfoDialog(self, default_label=next_label, current_map_labels=all_marker_labels)
+        dialog = MarkerInfoDialog(self, default_label=next_label, current_map_labels=current_map_labels)
         if dialog.exec() == QDialog.Accepted:
             new_data = dialog.get_data()
             new_label = new_data["label"]
             
-            # Check if marker already exists globally in the marker table
+            # Check if marker label already exists on THIS map
+            if new_label in current_map_labels:
+                QMessageBox.warning(
+                    self,
+                    "Duplicate Label",
+                    f"Each label can only appear once per map.\n\n"
+                    f"The label '{new_label}' is already used on this map.",
+                    QMessageBox.Ok
+                )
+                return
+            
+            # Check if marker label exists globally (in marker table) but on a different map
+            all_marker_labels = self.db.get_current_marker_labels()
             if new_label in all_marker_labels:
                 reply = QMessageBox.question(
                     self,
-                    "Duplicate Label",
-                    f"A marker with label '{new_label}' already exists.\n\n"
+                    "Existing Marker",
+                    f"A marker with label '{new_label}' already exists on another map.\n\n"
                     "The label must be positioned in the same location on this map.\n\n"
                     "Click 'Yes' to proceed, or 'No' to cancel and choose a different label.",
                     QMessageBox.Yes | QMessageBox.No,

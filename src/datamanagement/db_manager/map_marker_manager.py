@@ -64,6 +64,19 @@ class MapMarkerMixin:
             rows = conn.execute("SELECT label FROM marker").fetchall()
             return {row["label"] for row in rows}
 
+    def get_marker_labels_for_map(self, map_filename):
+        """Returns set of marker labels placed on a specific map."""
+        with self.get_connection() as conn:
+            query = """
+                SELECT m.label
+                FROM marker m
+                JOIN sitemap_marker sm ON m.id = sm.marker_id
+                JOIN sitemap s ON sm.sitemap_id = s.id
+                WHERE s.file_name = ?
+            """
+            rows = conn.execute(query, (map_filename,)).fetchall()
+            return {row["label"] for row in rows}
+
     def get_next_marker_label(self):
         """Generates the next available alphabetical label (A, B, ..., Z, AA, AB, ...)."""
         used_labels = self.get_current_marker_labels()
@@ -136,8 +149,8 @@ class MapMarkerMixin:
     def place_marker_on_map(self, marker_label, map_filename, x_coord, y_coord):
         """Places a marker on a specific map with pixel coordinates.
         
-        If the marker already exists on this map, adds a new entry to sitemap_marker
-        with the new position (allows multiple placements of same marker on same map).
+        If the marker already exists on this map, updates the existing entry
+        with the new position (enforces one marker per map).
         """
         with self.get_connection() as conn:
             marker_row = conn.execute(
@@ -157,6 +170,9 @@ class MapMarkerMixin:
             conn.execute("""
                 INSERT INTO sitemap_marker (marker_id, sitemap_id, x_coord, y_coord)
                 VALUES (?, ?, ?, ?)
+                ON CONFLICT(marker_id, sitemap_id) DO UPDATE SET
+                    x_coord = excluded.x_coord,
+                    y_coord = excluded.y_coord
             """, (marker_row["id"], map_row["id"], x_coord, y_coord))
             conn.commit()
 
