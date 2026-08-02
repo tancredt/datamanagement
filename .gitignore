@@ -1,4 +1,6 @@
-```
+#App
+incidents/
+
 # Compiled Python files
 *.pyc
 __pycache__/
@@ -26,6 +28,8 @@ target/
 # Editors/IDE
 .vscode/
 .idea/
+\#*#
+.py~
 
 # Coverage reports
 .coverage
@@ -39,4 +43,3 @@ htmlcov/
 # OS specific
 .DS_Store
 Thumbs.db
-```
