@@ -28,6 +28,8 @@ venv/
 # Editors
 .vscode/
 .idea/
+.py~
+.#
 
 # Distribution / packaging
 dist/
