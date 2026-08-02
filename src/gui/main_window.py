@@ -233,6 +233,7 @@ class DataAnalyzerGUI(QMainWindow):
         dock_layout.setSpacing(10)
 
         self.btn_overview = QPushButton("Overview")
+        self.btn_overview.setCheckable(True)
         self.btn_overview.setMinimumHeight(45)
         self.btn_overview.setCursor(Qt.PointingHandCursor)
         self.btn_overview.setStyleSheet("""
@@ -241,6 +242,7 @@ class DataAnalyzerGUI(QMainWindow):
                 font-size: 14px; color: white; background-color: #8b5cf6; font-weight: bold;  
             }
             QPushButton:hover { background-color: #7c3aed; }
+            QPushButton:checked { background-color: #6d28d9; box-shadow: 0 0 10px rgba(109, 40, 217, 0.5); }
         """)
         self.btn_overview.clicked.connect(self._show_overview)
         dock_layout.addWidget(self.btn_overview)
@@ -696,6 +698,9 @@ class DataAnalyzerGUI(QMainWindow):
         # Clear all views when data_type changes
         self._clear_current_view()
 
+        # Uncheck Overview button when changing data type
+        self.btn_overview.setChecked(False)
+
         # Update nav button constraints
         constraints = VIEW_CONSTRAINTS.get(self.data_type, VIEW_CONSTRAINTS["area"])
         enabled_indices = constraints["enabled"]
@@ -726,6 +731,9 @@ class DataAnalyzerGUI(QMainWindow):
         if index not in constraints["enabled"]:
             index = constraints["default"]
             self.nav_btns[index].setChecked(True)
+        
+        # Uncheck the Overview button when a standard nav button is clicked
+        self.btn_overview.setChecked(False)
         
         self._load_view(index)
 
@@ -925,6 +933,11 @@ class DataAnalyzerGUI(QMainWindow):
         """Loads the Overview grid into the central view stack."""
         if not self.active_incident_path:
             return
+        # Uncheck all standard navigation buttons
+        for btn in self.nav_btns.values():
+            btn.setChecked(False)
+        # Check the Overview button to show it's active
+        self.btn_overview.setChecked(True)
         # Index 5 will be our designated slot for the Overview widget
         self._load_view(5)
         
