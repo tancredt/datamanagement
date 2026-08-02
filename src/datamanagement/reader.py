@@ -136,7 +136,7 @@ def read_area_data(incident_path, start_time=None, stop_time=None, devices=None,
     if only_valid:
         query += " AND ara.invalidation_id IS NULL"
         
-    query += " ORDER BY ar.timestamp DESC"
+    query += " ORDER BY ar.timestamp ASC"
     
     with db.get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
@@ -225,7 +225,7 @@ def read_spot_data(incident_path, start_time=None, stop_time=None, devices=None,
         query += f" AND a.label IN ({placeholders})"
         params.extend(analytes)
         
-    query += " ORDER BY sr.timestamp DESC"
+    query += " ORDER BY sr.timestamp ASC"
     
     with db.get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
@@ -301,7 +301,7 @@ def read_spectral_data(incident_path, start_time=None, stop_time=None, devices=N
         
     query, params = _apply_site_filter(query, params, sites)
             
-    query += " ORDER BY sr.timestamp DESC"
+    query += " ORDER BY sr.timestamp ASC"
     
     with db.get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
@@ -361,7 +361,7 @@ def read_exposure_data(incident_path, start_time=None, stop_time=None, devices=N
         query += f" AND e.identifier IN ({placeholders})" 
         params.extend(devices)
 
-    query += " ORDER BY e.start_dt DESC"
+    query += " ORDER BY e.start_dt ASC"
     
     with db.get_connection() as conn:
         #conn.set_trace_callback(print)

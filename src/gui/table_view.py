@@ -281,7 +281,7 @@ class TableView(DataView):
         # Reorder columns before passing to model
         reordered_data = self._reorder_columns(self.filtered_data)
         
-        # ✅ NEW: Drop columns that are completely empty (all NaN or empty strings)
+        # Drop columns that are completely empty (all NaN or empty strings)
         if reordered_data is not None and not reordered_data.empty:
             # Protect core metadata columns from being dropped
             protected_cols = ['LOG TIME', 'SITE', 'DEVICE']
