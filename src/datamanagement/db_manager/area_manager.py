@@ -14,7 +14,7 @@ class AreaMixin:
                 FROM area_location al
                 JOIN marker m ON al.marker_id = m.id
                 LEFT JOIN device d ON al.device_id = d.id
-                ORDER BY al.start_dt DESC
+                ORDER BY al.start_dt ASC
             """
             return [dict(row) for row in conn.execute(query).fetchall()]
 
@@ -173,7 +173,7 @@ class AreaMixin:
                 FROM area_invalidations ai
                 LEFT JOIN device d ON ai.device_id = d.id
                 JOIN analyte a ON ai.analyte_id = a.id
-                ORDER BY ai.start_dt DESC
+                ORDER BY ai.start_dt ASC
             """
             rows = conn.execute(query).fetchall()
             

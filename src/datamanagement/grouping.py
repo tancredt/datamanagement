@@ -88,6 +88,9 @@ def aggregate_data(df, interval, group_by, data_type="area"):
     # Ensure LOG TIME is correctly named
     if 'LOG TIME' not in res_agg.columns:
         res_agg = res_agg.rename(columns={res_agg.columns[1]: 'LOG TIME'})
+    
+    # Sort by group column and then by LOG TIME to ensure consistent ordering
+    res_agg = res_agg.sort_values(by=[group_col, 'LOG TIME']).reset_index(drop=True)
         
     # STEP 3: 1-Minute Coverage Validation
     valid_df['min_bin'] = valid_df['LOG TIME'].dt.ceil('1min')

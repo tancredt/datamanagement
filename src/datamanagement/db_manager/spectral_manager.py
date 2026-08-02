@@ -15,7 +15,7 @@ class SpectralMixin:
                 FROM spectral_result sr
                 JOIN marker m ON sr.marker_id = m.id
                 LEFT JOIN device d ON sr.device_id = d.id
-                ORDER BY sr.timestamp DESC
+                ORDER BY sr.timestamp ASC
             """
             return [dict(row) for row in conn.execute(query).fetchall()]
 

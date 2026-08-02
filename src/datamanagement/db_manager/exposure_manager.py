@@ -22,7 +22,7 @@ class ExposureMixin:
                 SELECT id, identifier, start_dt, stop_dt, area, activities, 
                        respiratory, clothing, footwear  
                 FROM exposure 
-                ORDER BY start_dt DESC
+                ORDER BY start_dt ASC
             """).fetchall()
             
             exposures = []

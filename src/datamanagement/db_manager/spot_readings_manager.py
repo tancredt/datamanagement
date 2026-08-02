@@ -16,7 +16,7 @@ class SpotReadingsMixin:
                 JOIN marker m ON sr.marker_id = m.id
                 LEFT JOIN device d ON sr.device_id = d.id
                 JOIN analyte a ON sr.analyte_id = a.id
-                ORDER BY sr.timestamp DESC
+                ORDER BY sr.timestamp ASC
             """
             rows = conn.execute(query).fetchall()
             
