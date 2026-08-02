@@ -1,5 +1,4 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
+
 #App
 incidents/
 
@@ -30,68 +29,4 @@ node_modules/
 
 # Build and distribution
 dist/
-=======
-```
-=======
-#App
-incidents/
 
->>>>>>> table-view-log-time-order-14c1d
-# Compiled Python files
-*.pyc
-__pycache__/
-
-# Dependencies
-.venv/
-venv/
-node_modules/
-
-# Build/dist directories
->>>>>>> cf85ea8c709cb6db4f7dc51d6fcc159f50d77af6
-build/
-dist/
-target/
-
-<<<<<<< HEAD
-# Coverage reports
-coverage/
-htmlcov/
-.coverage
-
-# Testing
-.pytest_cache/
-.mypy_cache/
-=======
-# Logs and temporary files
-*.log
-*.tmp
-*.swp
-
-# Environment files
-.env
-.env.local
-*.env.*
-
-# Editors/IDE
-.vscode/
-.idea/
-\#*#
-.py~
-
-# Coverage reports
-.coverage
-coverage/
-htmlcov/
-
-# Python cache
-.mypy_cache/
-.pytest_cache/
-
-# OS specific
-.DS_Store
-Thumbs.db
-<<<<<<< HEAD
->>>>>>> cf85ea8c709cb6db4f7dc51d6fcc159f50d77af6
-```
-=======
->>>>>>> table-view-log-time-order-14c1d
