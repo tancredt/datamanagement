@@ -1,4 +1,6 @@
-```
+#App
+incidents/
+
 # Python
 __pycache__/
 *.pyc
@@ -19,6 +21,8 @@ __pycache__/
 .idea/
 *.swp
 *.swo
+*.py~
+\#*#
 
 # Dependencies
 .venv/
@@ -29,4 +33,3 @@ node_modules/
 dist/
 build/
 target/
-```
