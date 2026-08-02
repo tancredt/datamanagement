@@ -541,18 +541,38 @@ class DataAnalyzerGUI(QMainWindow):
             lbl.setText(text)
 
     def _refresh_current_view(self):
-        """Refreshes the currently active view by destroying and recreating all views.
+        """Refreshes the currently active view by recreating only that view.
         
         This is called when underlying data changes (imports, updates, etc).
-        Views are destroyed when:
-        - data_type changes (Spot → Area → Spectral, etc.)
-        - filters are updated via the Filter dialog
-        - data is modified (imports, location updates, validations, maps, etc.)
-        """
-        self._clear_current_view()
+        Only the current view is recreated; other views in the stack are preserved.
         
-        # Reload the current view
+        Views are refreshed when:
+        - data is modified (imports, location updates, validations, maps, etc.)
+        
+        Note: All views are cleared only when data_type changes or filters update.
+        """
+        # Get the current view index
         current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
+        
+        # Remove only the current view from the stack (if it exists)
+        import matplotlib.pyplot as plt
+        
+        current_widget = self.view_stack.currentWidget()
+        if current_widget:
+            # Check if this widget matches the expected view type for current_idx
+            expected_class = self._get_view_class_for_index(current_idx)
+            if expected_class and type(current_widget) == expected_class:
+                # This is the view for current_idx, remove and recreate it
+                self.view_stack.removeWidget(current_widget)
+                if hasattr(current_widget, 'figure'):
+                    try: plt.close(current_widget.figure)
+                    except Exception: pass
+                if hasattr(current_widget, 'summary_figure'):
+                    try: plt.close(current_widget.summary_figure)
+                    except Exception: pass
+                current_widget.deleteLater()
+        
+        # Reload only the current view
         self._load_view(current_idx)
             
     # ─────────────────────────────────────────────────────────
@@ -564,7 +584,8 @@ class DataAnalyzerGUI(QMainWindow):
         QStackedWidget automatically caches/preserves views when switching between them.
         Views are only destroyed when:
         - data_type changes (Spot → Area → Spectral, etc.)
-        - filters are updated via the Filter dialog
+        - filters are updated via the Filter dialog (last_filters.json changes)
+        - data is modified (imports, location updates, validations, maps, etc.)
         """
         import matplotlib.pyplot as plt
         
@@ -584,9 +605,29 @@ class DataAnalyzerGUI(QMainWindow):
         """Instantiates the requested view and displays it.
         
         QStackedWidget automatically preserves views when switching between them.
-        Views are only destroyed when data_type changes or filters update.
+        Views are only destroyed when:
+        - data_type changes (Spot → Area → Spectral, etc.)
+        - filters are updated via the Filter dialog (last_filters.json changes)
+        - data is modified (imports, location updates, validations, maps, etc.)
+        
+        Switching between different view types (Table, Chart, etc.) with the same
+        data_type does NOT destroy views - they are preserved in the stack.
         """
         if not self.active_incident_path:
+            return
+        
+        # Check if a view of this type already exists in the stack
+        existing_view = None
+        for i in range(self.view_stack.count()):
+            widget = self.view_stack.widget(i)
+            # Check if widget is of the same class as the requested view type
+            if self._get_view_class_for_index(index) == type(widget):
+                existing_view = widget
+                break
+        
+        if existing_view is not None:
+            # View already exists, just switch to it
+            self.view_stack.setCurrentWidget(existing_view)
             return
         
         # Create new view
@@ -612,6 +653,23 @@ class DataAnalyzerGUI(QMainWindow):
         if view is not None:
             self.view_stack.addWidget(view)
             self.view_stack.setCurrentWidget(view)
+
+    def _get_view_class_for_index(self, index):
+        """Returns the class type for a given view index."""
+        if index == 0:
+            return TableView
+        elif index == 1:
+            return ChartView
+        elif index == 2:
+            return SummaryTableView
+        elif index == 3:
+            return SummaryChartView
+        elif index == 4:
+            return SummaryMapView
+        elif index == 5:
+            from overview_view import OverviewWidget
+            return OverviewWidget
+        return None
 
             
     # ─────────────────────────────────────────────────────────
