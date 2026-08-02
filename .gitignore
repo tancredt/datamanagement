@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 #App
 incidents/
 
@@ -31,6 +32,11 @@ node_modules/
 dist/
 =======
 ```
+=======
+#App
+incidents/
+
+>>>>>>> table-view-log-time-order-14c1d
 # Compiled Python files
 *.pyc
 __pycache__/
@@ -69,6 +75,8 @@ htmlcov/
 # Editors/IDE
 .vscode/
 .idea/
+\#*#
+.py~
 
 # Coverage reports
 .coverage
@@ -82,5 +90,8 @@ htmlcov/
 # OS specific
 .DS_Store
 Thumbs.db
+<<<<<<< HEAD
 >>>>>>> cf85ea8c709cb6db4f7dc51d6fcc159f50d77af6
 ```
+=======
+>>>>>>> table-view-log-time-order-14c1d
