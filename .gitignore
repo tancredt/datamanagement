@@ -1,4 +1,6 @@
-```
+#App
+incidents/
+
 # Python
 __pycache__/
 *.pyc
@@ -35,4 +37,3 @@ venv/
 dist/
 build/
 *.egg-info/
-```
