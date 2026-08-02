@@ -19,6 +19,11 @@ __pycache__/
 .idea/
 *.swp
 *.swo
+<<<<<<< HEAD
+=======
+*.py~
+\#*#
+>>>>>>> f629d8fcb90779aa2ea963e74d4a13de47b8a265
 
 # Dependencies
 .venv/
@@ -29,4 +34,7 @@ node_modules/
 dist/
 build/
 target/
+<<<<<<< HEAD
 ```
+=======
+>>>>>>> f629d8fcb90779aa2ea963e74d4a13de47b8a265
