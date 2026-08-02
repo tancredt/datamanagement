@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 #App
 incidents/
 
@@ -28,9 +29,24 @@ node_modules/
 
 # Build and distribution
 dist/
+=======
+```
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Dependencies
+.venv/
+venv/
+node_modules/
+
+# Build/dist directories
+>>>>>>> cf85ea8c709cb6db4f7dc51d6fcc159f50d77af6
 build/
+dist/
 target/
 
+<<<<<<< HEAD
 # Coverage reports
 coverage/
 htmlcov/
@@ -39,4 +55,32 @@ htmlcov/
 # Testing
 .pytest_cache/
 .mypy_cache/
+=======
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Editors/IDE
+.vscode/
+.idea/
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# Python cache
+.mypy_cache/
+.pytest_cache/
+
+# OS specific
+.DS_Store
+Thumbs.db
+>>>>>>> cf85ea8c709cb6db4f7dc51d6fcc159f50d77af6
 ```
