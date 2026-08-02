@@ -1,4 +1,6 @@
-```
+#App
+incidents/
+
 # Compiled Python files
 *.pyc
 __pycache__/
@@ -21,6 +23,8 @@ node_modules/
 # Editors
 .vscode/
 .idea/
+\#*#
+.py~
 
 # Build and distribution
 dist/
