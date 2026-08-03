@@ -1,3 +1,6 @@
+#App
+incidents/
+
 # Compiled and build artifacts
 *.pyc
 __pycache__/
@@ -29,6 +32,8 @@ node_modules/
 # Editors
 .vscode/
 .idea/
+\#*#
+.py~
 
 # System files
 .DS_Store
