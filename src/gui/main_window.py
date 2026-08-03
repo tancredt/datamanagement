@@ -580,7 +580,7 @@ class DataAnalyzerGUI(QMainWindow):
     # ─────────────────────────────────────────────────────────
     # DYNAMIC VIEW ENGINE
     # ─────────────────────────────────────────────────────────
-    def _clear_current_view(self):
+    def _clear_current_views(self):
         """Destroys all views in the stack when data_type changes or filters update.
         
         QStackedWidget automatically caches/preserves views when switching between them.
@@ -696,7 +696,7 @@ class DataAnalyzerGUI(QMainWindow):
         self.data_type = new_data_type
 
         # Clear all views when data_type changes
-        self._clear_current_view()
+        self._clear_current_views()
 
         # Uncheck Overview button when changing data type
         self.btn_overview.setChecked(False)
@@ -759,7 +759,7 @@ class DataAnalyzerGUI(QMainWindow):
         
         if dialog.exec() == QDialog.Accepted:
             # Clear ALL views when filters change (views need to reload with new filters)
-            self._clear_current_view()
+            self._clear_current_views()
             
             # Reload current view with fresh data
             current_idx = next((idx for idx, btn in self.nav_btns.items() if btn.isChecked()), 0)
