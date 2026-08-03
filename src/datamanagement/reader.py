@@ -1,3 +1,4 @@
+"""Module for reading incident data from database files."""
 import os
 import json
 import logging
@@ -23,7 +24,7 @@ def _load_preferences(incident_path):
             voc_corr = float(prefs.get("voc_correction", 1.0))
             lel_corr = float(prefs.get("lel_correction", 1.0))
         except Exception as e:
-            logger.error(f"Failed to load preferences: {e}")
+            logger.error("Failed to load preferences: %s", e)
     return voc_corr, lel_corr
 
 def _apply_corrections(df, incident_path):
@@ -58,10 +59,10 @@ def _apply_site_filter(query, params, sites):
     """
     if not sites:
         return query, params
-        
+
     has_unassigned = "Unassigned" in sites
     valid_sites = [s for s in sites if s != "Unassigned"]
-    
+
     if has_unassigned and valid_sites:
         placeholders = ','.join(['?'] * len(valid_sites))
         query += f" AND (m.label IS NULL OR m.label IN ({placeholders}))"
@@ -72,16 +73,31 @@ def _apply_site_filter(query, params, sites):
         placeholders = ','.join(['?'] * len(valid_sites))
         query += f" AND m.label IN ({placeholders})"
         params.extend(valid_sites)
-        
+
     return query, params
 
 # ==========================================
 # 2. AREA DATA (Reads from DB with Filters)
 # ==========================================
-def read_area_data(incident_path, start_time=None, stop_time=None, devices=None, sites=None, analytes=None, only_valid=False):
+def read_area_data(incident_path, start_time=None, stop_time=None, devices=None,
+                   sites=None, analytes=None, only_valid=False):
+    """Read area monitoring data from the database with optional filters.
+
+    Args:
+        incident_path: Path to the incident folder.
+        start_time: Filter readings after this time.
+        stop_time: Filter readings before this time.
+        devices: List of device labels to include.
+        sites: List of site names to include (use 'Unassigned' for NULL sites).
+        analytes: List of analyte labels to include.
+        only_valid: If True, only include valid (non-invalidated) readings.
+
+    Returns:
+        pandas.DataFrame: Area reading data.
+    """
     db = IncidentDatabase(incident_path)
-    
-    # ✅ FIXED: Join directly to marker using the synced marker_id. 
+
+    # ✅ FIXED: Join directly to marker using the synced marker_id.
     # No more runtime timestamp math against area_location.
     query = """
     SELECT ar.timestamp AS logtime, d.label AS device,
@@ -97,26 +113,26 @@ def read_area_data(incident_path, start_time=None, stop_time=None, devices=None,
     WHERE 1=1
     """
     # ... (the rest of the parameter building remains exactly the same) ...
-    
+
     params = []
-    
+
     if start_time:
         query += " AND ar.timestamp > ?"
         params.append(str(start_time))
     if stop_time:
         query += " AND ar.timestamp <= ?"
         params.append(str(stop_time))
-        
+
     if devices:
         placeholders = ','.join(['?'] * len(devices))
         query += f" AND d.label IN ({placeholders})"
         params.extend(devices)
-        
+
     # ✅ FIX: Properly handle "Unassigned" which maps to NULL in the database
     if sites:
         has_unassigned = "Unassigned" in sites
         valid_sites = [s for s in sites if s != "Unassigned"]
-        
+
         if has_unassigned and valid_sites:
             placeholders = ','.join(['?'] * len(valid_sites))
             query += f" AND (m.label IS NULL OR m.label IN ({placeholders}))"
@@ -127,20 +143,20 @@ def read_area_data(incident_path, start_time=None, stop_time=None, devices=None,
             placeholders = ','.join(['?'] * len(valid_sites))
             query += f" AND m.label IN ({placeholders})"
             params.extend(valid_sites)
-            
+
     if analytes:
         placeholders = ','.join(['?'] * len(analytes))
         query += f" AND a.label IN ({placeholders})"
         params.extend(analytes)
-        
+
     if only_valid:
         query += " AND ara.invalidation_id IS NULL"
-        
+
     query += " ORDER BY ar.timestamp ASC"
-    
+
     with db.get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
-        
+
     readings_dict = {}
     for row in rows:
         key = (row['device'], row['logtime'])
@@ -157,16 +173,16 @@ def read_area_data(incident_path, start_time=None, stop_time=None, devices=None,
         if row['analyte']:
             readings_dict[key][row['analyte']] = row['value']
             readings_dict[key][f"INVALID_{row['analyte']}"] = row['invalid_flag']
-            
+
     area_readings = list(readings_dict.values())
     if not area_readings:
         return pd.DataFrame()
-        
+
     analytes_data = db.get_analytes()
     available_analytes = [a['label'] for a in analytes_data]
     if analytes:
         available_analytes = [a for a in available_analytes if a in analytes]
-        
+
     rows_out = []
     for r in area_readings:
         row = {
@@ -182,21 +198,35 @@ def read_area_data(incident_path, start_time=None, stop_time=None, devices=None,
             row[analyte] = r.get(analyte)
             row[f"INVALID_{analyte}"] = r.get(f"INVALID_{analyte}", 0)
         rows_out.append(row)
-        
+
     df = pd.DataFrame(rows_out)
     if not df.empty and 'LOG TIME' in df.columns:
         df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-        
+
     df = _apply_corrections(df, incident_path)
     return df
 
 # ==========================================
 # 3. SPOT DATA (Reads from DB with Filters)
 # ==========================================
-def read_spot_data(incident_path, start_time=None, stop_time=None, devices=None, sites=None, analytes=None):
+def read_spot_data(incident_path, start_time=None, stop_time=None, devices=None,
+                   sites=None, analytes=None):
+    """Read spot monitoring data from the database with optional filters.
+
+    Args:
+        incident_path: Path to the incident folder.
+        start_time: Filter readings after this time.
+        stop_time: Filter readings before this time.
+        devices: List of device labels to include.
+        sites: List of site names to include (use 'Unassigned' for NULL sites).
+        analytes: List of analyte labels to include.
+
+    Returns:
+        pandas.DataFrame: Spot reading data.
+    """
     db = IncidentDatabase(incident_path)
     query = """
-        SELECT m.label AS location, d.label AS device, sr.timestamp AS logtime, 
+        SELECT m.label AS location, d.label AS device, sr.timestamp AS logtime,
                sr.comment AS observations, a.label AS analyte, sr.value
         FROM spot_reading sr
         JOIN marker m ON sr.marker_id = m.id
@@ -205,31 +235,31 @@ def read_spot_data(incident_path, start_time=None, stop_time=None, devices=None,
         WHERE 1=1
     """
     params = []
-    
+
     if start_time:
         query += " AND sr.timestamp >= ?"
         params.append(_prepare_time_param(start_time))
     if stop_time:
         query += " AND sr.timestamp <= ?"
         params.append(_prepare_time_param(stop_time))
-        
+
     if devices:
         placeholders = ','.join(['?'] * len(devices))
         query += f" AND (d.label IS NULL OR d.label IN ({placeholders}))"
         params.extend(devices)
-        
+
     query, params = _apply_site_filter(query, params, sites)
-            
+
     if analytes:
         placeholders = ','.join(['?'] * len(analytes))
         query += f" AND a.label IN ({placeholders})"
         params.extend(analytes)
-        
+
     query += " ORDER BY sr.timestamp ASC"
-    
+
     with db.get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
-        
+
     readings_dict = {}
     for row in rows:
         key = (row['location'], row['device'] or "", row['logtime'])
@@ -239,16 +269,16 @@ def read_spot_data(incident_path, start_time=None, stop_time=None, devices=None,
                 "logtime": row['logtime'], "observations": row['observations'] or ""
             }
         readings_dict[key][row['analyte']] = row['value']
-        
+
     spot_readings = list(readings_dict.values())
     if not spot_readings:
         return pd.DataFrame()
-        
+
     analytes_data = db.get_analytes()
     available_analytes = [a['label'] for a in analytes_data]
     if analytes:
         available_analytes = [a for a in available_analytes if a in analytes]
-        
+
     rows_out = []
     for r in spot_readings:
         row = {
@@ -263,11 +293,11 @@ def read_spot_data(incident_path, start_time=None, stop_time=None, devices=None,
             row[analyte] = r.get(analyte)
             row[f"INVALID_{analyte}"] = 0
         rows_out.append(row)
-        
+
     df = pd.DataFrame(rows_out)
     if not df.empty and 'LOG TIME' in df.columns:
         df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-        
+
     df = _apply_corrections(df, incident_path)
     return df
 
@@ -275,6 +305,18 @@ def read_spot_data(incident_path, start_time=None, stop_time=None, devices=None,
 # 4. SPECTRAL DATA (Reads from DB with Filters)
 # ==========================================
 def read_spectral_data(incident_path, start_time=None, stop_time=None, devices=None, sites=None):
+    """Read spectral data from the database with optional filters.
+
+    Args:
+        incident_path: Path to the incident folder.
+        start_time: Filter readings after this time.
+        stop_time: Filter readings before this time.
+        devices: List of device labels to include.
+        sites: List of site names to include (use 'Unassigned' for NULL sites).
+
+    Returns:
+        pandas.DataFrame: Spectral reading data.
+    """
     db = IncidentDatabase(incident_path)
     query = """
         SELECT m.label AS location, d.label AS device, sr.timestamp AS logtime,
@@ -286,29 +328,29 @@ def read_spectral_data(incident_path, start_time=None, stop_time=None, devices=N
         WHERE 1=1
     """
     params = []
-    
+
     if start_time:
         query += " AND sr.timestamp >= ?"
         params.append(_prepare_time_param(start_time))
     if stop_time:
         query += " AND sr.timestamp <= ?"
         params.append(_prepare_time_param(stop_time))
-        
+
     if devices:
         placeholders = ','.join(['?'] * len(devices))
         query += f" AND d.label IN ({placeholders})"
         params.extend(devices)
-        
+
     query, params = _apply_site_filter(query, params, sites)
-            
+
     query += " ORDER BY sr.timestamp ASC"
-    
+
     with db.get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
-        
+
     if not rows:
         return pd.DataFrame()
-        
+
     rows_out = []
     for row in rows:
         r = dict(row)
@@ -320,20 +362,32 @@ def read_spectral_data(incident_path, start_time=None, stop_time=None, devices=N
             "comments": r.get("comments", ""),
             "file_ref": r.get("file_ref", ""),
         })
-        
+
     df = pd.DataFrame(rows_out)
     if not df.empty and 'LOG TIME' in df.columns:
         df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-        
+
     return df
 
 # ==========================================
 # 5. EXPOSURE DATA (Reads from DB with Filters)
 # ==========================================
 def read_exposure_data(incident_path, start_time=None, stop_time=None, devices=None, analytes=None):
+    """Read exposure data from the database with optional filters.
+
+    Args:
+        incident_path: Path to the incident folder.
+        start_time: Filter readings after this time.
+        stop_time: Filter readings before this time.
+        devices: List of device labels to include.
+        analytes: List of analyte labels to include.
+
+    Returns:
+        pandas.DataFrame: Exposure reading data.
+    """
     db = IncidentDatabase(incident_path)
     query = """
-        SELECT e.identifier, e.start_dt, e.stop_dt, e.area, e.activities, 
+        SELECT e.identifier, e.start_dt, e.stop_dt, e.area, e.activities,
                e.respiratory, e.clothing, e.footwear, d.label AS device,
                a.label AS analyte, er.min_value, er.max_value, er.mean_value
         FROM exposure e
@@ -343,14 +397,14 @@ def read_exposure_data(incident_path, start_time=None, stop_time=None, devices=N
         WHERE 1=1
     """
     params = []
-    
+
     if start_time:
         query += " AND e.start_dt >= ?"
         params.append(_prepare_time_param(start_time))
     if stop_time:
         query += " AND e.start_dt <= ?"
         params.append(_prepare_time_param(stop_time))
-        
+
     if analytes:
         placeholders = ','.join(['?'] * len(analytes))
         query += f" AND a.label IN ({placeholders})"
@@ -358,16 +412,16 @@ def read_exposure_data(incident_path, start_time=None, stop_time=None, devices=N
 
     if devices:
         placeholders = ','.join(['?'] * len(devices))
-        query += f" AND e.identifier IN ({placeholders})" 
+        query += f" AND e.identifier IN ({placeholders})"
         params.extend(devices)
 
     query += " ORDER BY e.start_dt ASC"
-    
+
     with db.get_connection() as conn:
         #conn.set_trace_callback(print)
         rows = conn.execute(query, params).fetchall()
         #conn.set_trace_callback(None)
-        
+
     exposures_dict = {}
     for row in rows:
         key = (row['identifier'], row['start_dt'])
@@ -389,11 +443,11 @@ def read_exposure_data(incident_path, start_time=None, stop_time=None, devices=N
                 "max": row['max_value'],
                 "mean": row['mean_value']
             }
-            
+
     exposures = list(exposures_dict.values())
     if not exposures:
         return pd.DataFrame()
-        
+
     analytes_data = db.get_analytes()
     available_analytes = [a['label'] for a in analytes_data]
     if analytes:
@@ -406,19 +460,22 @@ def read_exposure_data(incident_path, start_time=None, stop_time=None, devices=N
                 "SITE": exp.get("area", ""),
             }
             values = exp.get("values", {})
-        for analyte in available_analytes:
-            if analyte in values:
-                v = values[analyte]
-                if isinstance(v, dict):
-                    if v.get("min") is not None: row[f"{analyte}_min"] = float(v["min"])
-                    if v.get("max") is not None: row[f"{analyte}_max"] = float(v["max"])
-                    if v.get("mean") is not None: row[f"{analyte}_mean"] = float(v["mean"])
-        rows_out.append(row)
-        
+            for analyte in available_analytes:
+                if analyte in values:
+                    v = values[analyte]
+                    if isinstance(v, dict):
+                        if v.get("min") is not None:
+                            row[f"{analyte}_min"] = float(v["min"])
+                        if v.get("max") is not None:
+                            row[f"{analyte}_max"] = float(v["max"])
+                        if v.get("mean") is not None:
+                            row[f"{analyte}_mean"] = float(v["mean"])
+            rows_out.append(row)
+
     df = pd.DataFrame(rows_out)
     if not df.empty and 'LOG TIME' in df.columns:
         df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-        
+
     df = _apply_corrections(df, incident_path)
     return df
 
@@ -426,6 +483,15 @@ def read_exposure_data(incident_path, start_time=None, stop_time=None, devices=N
 # 6. BATTERY DATA (Efficient query for battery analysis)
 # ==========================================
 def read_battery_data(incident_path, device_label=None):
+    """Read battery data from the database with optional device filter.
+
+    Args:
+        incident_path: Path to the incident folder.
+        device_label: Optional device label to filter by.
+
+    Returns:
+        pandas.DataFrame: Battery reading data.
+    """
     db = IncidentDatabase(incident_path)
     query = """
         SELECT ar.timestamp AS logtime, d.label AS device, ar.battery
@@ -434,19 +500,19 @@ def read_battery_data(incident_path, device_label=None):
         WHERE ar.battery IS NOT NULL
     """
     params = []
-    
+
     if device_label:
         query += " AND d.label = ?"
         params.append(device_label)
-        
+
     query += " ORDER BY ar.timestamp ASC"
-    
+
     with db.get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
-        
+
     if not rows:
         return pd.DataFrame(columns=['LOG TIME', 'DEVICE', 'BATTERY'])
-        
+
     data = []
     for row in rows:
         data.append({
@@ -454,9 +520,9 @@ def read_battery_data(incident_path, device_label=None):
             'DEVICE': row['device'] or '',
             'BATTERY': row['battery']
         })
-        
+
     df = pd.DataFrame(data)
     if not df.empty and 'LOG TIME' in df.columns:
         df['LOG TIME'] = pd.to_datetime(df['LOG TIME'], errors='coerce')
-        
+
     return df
