@@ -74,6 +74,26 @@ class ChartView(DataView):
             self.canvas.draw()
             return
 
+        # ── Filter out invalid data if "Only valid" is selected ──
+        only_valid = self.filter_summary.get("only_valid", False)
+        if only_valid:
+            # Filter out rows where any selected analyte has INVALID_* flag == 1
+            for analyte in valid_analytes:
+                inv_col = f"INVALID_{analyte}"
+                if inv_col in df.columns:
+                    # Keep only rows where INVALID_* == 0 (valid)
+                    df = df[df[inv_col] == 0]
+                else:
+                    # If no INVALID column exists, keep rows where analyte is not NaN
+                    df = df[df[analyte].notna()]
+            # After filtering, check if we still have data
+            if df.empty:
+                self.ax.text(0.5, 0.5, "No valid data matches the current filters.",
+                             horizontalalignment='center', verticalalignment='center',
+                             transform=self.ax.transAxes)
+                self.canvas.draw()
+                return
+
         # Fix: Use case-insensitive comparison and ensure uppercase column names
         group_by = str(self.filter_summary.get("group_by", "Device")).strip()
         if group_by.lower() == "device":

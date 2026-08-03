@@ -758,7 +758,7 @@ class DataAnalyzerGUI(QMainWindow):
         )
         
         if dialog.exec() == QDialog.Accepted:
-            # Clear all views when filters change (views need to reload with new filters)
+            # Clear ALL views when filters change (views need to reload with new filters)
             self._clear_current_view()
             
             # Reload current view with fresh data
