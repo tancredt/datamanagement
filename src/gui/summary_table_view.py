@@ -13,7 +13,6 @@ from base_view import DataView
 
 THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
 
-
 class NumericTableWidgetItem(QTableWidgetItem):
     """Custom item that sorts numerically instead of alphabetically."""
     def lt(self, other):
@@ -109,7 +108,7 @@ class SummaryTableView(DataView):
         from datamanagement.grouping import calculate_summary_dataframe
         summary_df = calculate_summary_dataframe(df, group_col, valid_analytes, is_exposure)
 
-        self.summary_table.setHorizontalHeaderLabels([group_by_label, "Analyte", "Minimum", "Maximum", "Mean", "Count"])
+        self.summary_table.setHorizontalHeaderLabels([group_by_label, "Analyte", "Mean", "Maximum", "Min", "Count"])
         
         # 4. Convert DataFrame to the tuple format expected by the UI rendering & export
         rows_data = []
@@ -121,39 +120,12 @@ class SummaryTableView(DataView):
                 int(row['Count']), dec_pls
             ))
             
-        self.summary_data = rows_data  # Keep for export/chart compatibility
 
         # --- UI Rendering Loop (Remains exactly the same) ---
         self.summary_table.setSortingEnabled(False)
         self.summary_table.setRowCount(len(rows_data))
         active_thresholds = self.get_active_thresholds()
         
-        for row, (grp, analyte, min_v, max_v, mean_v, count_v, dec_pls) in enumerate(rows_data):
-            self.summary_table.setItem(row, 0, QTableWidgetItem(grp))
-            self.summary_table.setItem(row, 1, QTableWidgetItem(analyte))
-            
-            min_item = NumericTableWidgetItem(f"{min_v:.{dec_pls}f}" if pd.notna(min_v) else "")
-            if pd.notna(min_v) and self._is_value_exceeding_threshold(analyte, min_v, active_thresholds):
-                min_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
-            self.summary_table.setItem(row, 2, min_item)
-            
-            max_item = NumericTableWidgetItem(f"{max_v:.{dec_pls}f}" if pd.notna(max_v) else "")
-            if pd.notna(max_v) and self._is_value_exceeding_threshold(analyte, max_v, active_thresholds):
-                max_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
-            self.summary_table.setItem(row, 3, max_item)
-            
-            mean_item = NumericTableWidgetItem(f"{mean_v:.{dec_pls}f}" if pd.notna(mean_v) else "")
-            if pd.notna(mean_v) and self._is_value_exceeding_threshold(analyte, mean_v, active_thresholds):
-                mean_item.setForeground(THRESHOLD_EXCEEDED_COLOR)
-            self.summary_table.setItem(row, 4, mean_item)
-            
-            self.summary_table.setItem(row, 5, NumericTableWidgetItem(str(count_v)))
-            
-        self.summary_table.setSortingEnabled(True)
-        self.summary_table.setRowCount(len(rows_data))
-        
-        # Use base class method to get active thresholds
-        active_thresholds = self.get_active_thresholds()
         for row, (grp, analyte, min_v, max_v, mean_v, count_v, dec_pls) in enumerate(rows_data):
             self.summary_table.setItem(row, 0, QTableWidgetItem(grp))
             self.summary_table.setItem(row, 1, QTableWidgetItem(analyte))
