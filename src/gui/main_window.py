@@ -46,7 +46,42 @@ from datamanagement.filter import FilterManager
 
 # Importer workers
 from datamanagement.importer import copy_files_to_realtime, import_area_data
-from datamanagement.updater import sync_all  # ✅ REPLACED OLD IMPORTS
+from datamanagement.db_manager.sync_manager import SyncMixin
+from datamanagement.db_manager import IncidentDatabase
+
+
+def sync_all(incident_path):
+    """
+    Perform all synchronization operations for an incident database.
+    
+    This includes:
+    - Syncing marker IDs (area_reading.marker_id based on area_location)
+    - Syncing invalidation IDs (area_reading_analyte.invalidation_id based on area_invalidations)
+    
+    Parameters
+    ----------
+    incident_path : str
+        Path to the incident directory containing the database file.
+    """
+    try:
+        db = IncidentDatabase(incident_path)
+        
+        # Sync marker IDs
+        logger.info("Syncing marker IDs...")
+        db.sync_marker_ids()
+        
+        # Sync invalidation IDs
+        logger.info("Syncing invalidation IDs...")
+        db.sync_invalidation_ids()
+        
+        logger.info("Synchronization complete.")
+        
+    except Exception as e:
+        logger.error(f"Error during synchronization: {e}")
+        raise
+
+
+# ✅ REPLACED OLD IMPORTS - Now using db_manager/sync_manager.py directly
 
 logger = logging.getLogger(__name__)
 
