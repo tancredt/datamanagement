@@ -238,7 +238,7 @@ def generate_pdf_report(incident_path, parent_widget=None):
         incident_data = load_json(os.path.join(incident_path, "meta", "incident.json"))
 
         # ─────────────────────────────────────────────────────────
-        # 3. FETCH OBJECTIVES FROM DATABASE (replaces old JSON file)
+        # 3. FETCH OBJECTIVES FROM DATABASE
         # ─────────────────────────────────────────────────────────
         raw_objectives = db.get_all_objectives()
         objectives_data = {}
