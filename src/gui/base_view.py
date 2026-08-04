@@ -7,15 +7,9 @@ from datetime import datetime
 from PySide6.QtWidgets import QWidget, QApplication, QProgressDialog
 from PySide6.QtCore import Qt
 from datamanagement.db_manager import IncidentDatabase
+from datamanagement.filter import FilterManager, DEVICE_KEY_MAP
 
 logger = logging.getLogger(__name__)
-
-DEVICE_KEY_MAP = {
-    "area": "selected_area_devices",
-    "spot": "selected_spot_devices",
-    "spectral": "selected_spectral_devices",
-    "exposure": "selected_exposure_identifiers"
-}
 
 class DataView(QWidget):
     """
@@ -150,38 +144,20 @@ class DataView(QWidget):
     # FILTER LOADING
     # ─────────────────────────────────────────────────────────
     def _load_filter_summary(self):
-        """Load filter summary from meta/last_filters.json."""
+        """Load filter summary from meta/last_filters.json using FilterManager."""
         if not self.incident_path:
             self.filter_summary = {}
             return
-            
-        filters_file = os.path.join(self.incident_path, "meta", "last_filters.json")
-        if not os.path.exists(filters_file):
-            self.filter_summary = self._get_default_filters()
-            return
-            
+        
         try:
-            with open(filters_file, 'r', encoding='utf-8') as f:
-                raw = json.load(f)
-                
-            def clean(obj):
-                if isinstance(obj, dict):
-                    return {k.strip(): clean(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [clean(elem) for elem in obj]
-                elif isinstance(obj, str):
-                    return obj.strip()
-                return obj
-                
-            raw = clean(raw)
-            for key in ("start_time", "stop_time"):
-                val = raw.get(key)
-                if isinstance(val, str):
-                    try:
-                        raw[key] = datetime.fromisoformat(val)
-                    except (ValueError, TypeError):
-                        raw[key] = None
-                        
+            filter_manager = FilterManager(self.incident_path)
+            raw = filter_manager.load_filters()
+            
+            # If file didn't exist, get defaults based on data type
+            if not raw or not any(raw.values()):
+                self.filter_summary = self._get_default_filters()
+                return
+            
             self.filter_summary = raw
         except Exception as e:
             logger.error(f"Failed to load filter summary: {e}")

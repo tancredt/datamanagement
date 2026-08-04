@@ -42,6 +42,7 @@ from summary_map_view import SummaryMapView
 # Filter dialog
 from filter_dialog import FilterDialog
 from thresholds_dialog import ThresholdsDialog
+from datamanagement.filter import FilterManager
 
 # Importer workers
 from datamanagement.importer import copy_files_to_realtime, import_area_data
@@ -416,43 +417,13 @@ class DataAnalyzerGUI(QMainWindow):
     # FILTER SUMMARY (Reads directly from disk)
     # ─────────────────────────────────────────────────────────
     def _read_filter_file(self):
-        """Reads the filter file from disk."""
+        """Reads the filter file from disk using FilterManager."""
         if not self.active_incident_path:
             return {}
         
-        filters_file = os.path.join(
-            self.active_incident_path, "meta", "last_filters.json"
-        )
-        
-        if not os.path.exists(filters_file):
-            return {}
-        
         try:
-            with open(filters_file, 'r', encoding='utf-8') as f:
-                raw = json.load(f)
-            
-            # Strip whitespace from keys and string values
-            def clean(obj):
-                if isinstance(obj, dict):
-                    return {k.strip(): clean(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [clean(elem) for elem in obj]
-                elif isinstance(obj, str):
-                    return obj.strip()
-                return obj
-            
-            raw = clean(raw)
-            
-            # Deserialize datetimes
-            for key in ("start_time", "stop_time"):
-                val = raw.get(key)
-                if isinstance(val, str):
-                    try:
-                        raw[key] = datetime.datetime.fromisoformat(val)
-                    except (ValueError, TypeError):
-                        raw[key] = None
-            
-            return raw
+            filter_manager = FilterManager(self.active_incident_path)
+            return filter_manager.load_filters()
         except Exception as e:
             logger.error(f"Failed to read filter file: {e}")
             return {}
