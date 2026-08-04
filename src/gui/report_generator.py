@@ -32,6 +32,7 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from datamanagement.db_manager import IncidentDatabase
+from datamanagement.filter import FilterManager
 from map_renderer import save_rendered_map_to_temp
 
 # Import the modular views to eliminate rendering duplication
