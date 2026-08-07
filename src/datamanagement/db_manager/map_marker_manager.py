@@ -106,11 +106,7 @@ class MapMarkerMixin:
             """, (label, description, latitude, longitude))
             conn.commit()
             
-            row = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (label,)
-            ).fetchone()
-            return row["id"] if row else None
+            return self.get_marker_id_by_label(label)
 
     def update_marker(self, label, description=None, latitude=None, longitude=None):
         """Updates an existing marker's information."""
@@ -147,16 +143,13 @@ class MapMarkerMixin:
         with the new position (enforces one marker per map).
         """
         with self.get_connection() as conn:
-            marker_row = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (marker_label,)
-            ).fetchone()
+            marker_id = self.get_marker_id_by_label(marker_label)
             map_row = conn.execute(
                 "SELECT id FROM sitemap WHERE file_name = ?", 
                 (map_filename,)
             ).fetchone()
             
-            if not marker_row or not map_row:
+            if not marker_id or not map_row:
                 raise ValueError(
                     f"Marker '{marker_label}' or Map '{map_filename}' not found."
                 )

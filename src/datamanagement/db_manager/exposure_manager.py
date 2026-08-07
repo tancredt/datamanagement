@@ -83,17 +83,7 @@ class ExposureMixin:
         with self.get_connection() as conn:
             device_id = None
             if device_label:
-                dev_row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (device_label,)
-                ).fetchone()
-                if dev_row:
-                    device_id = dev_row['id']
-                else:
-                    device_id = conn.execute(
-                        "INSERT INTO device (label, device_type) VALUES (?, ?)", 
-                        (device_label, "personal")
-                    ).lastrowid
+                device_id = self.get_or_create_device_id(device_label, "personal")
             
             exposure_id = conn.execute("""
                 INSERT INTO exposure 
@@ -147,17 +137,7 @@ class ExposureMixin:
             
             device_id = None
             if device_label:
-                dev_row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (device_label,)
-                ).fetchone()
-                if dev_row:
-                    device_id = dev_row['id']
-                else:
-                    device_id = conn.execute(
-                        "INSERT INTO device (label, device_type) VALUES (?, ?)", 
-                        (device_label, "personal")
-                    ).lastrowid
+                device_id = self.get_or_create_device_id(device_label, "personal")
             
             conn.execute("""
                 UPDATE exposure 

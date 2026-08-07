@@ -42,24 +42,13 @@ class SpotReadingsMixin:
         observations = reading_data.get("observations")
         
         with self.get_connection() as conn:
-            marker_id = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (location,)
-            ).fetchone()['id']
+            marker_id = self.get_marker_id_by_label(location)
+            if marker_id is None:
+                return False, "Location not found."
             
             device_id = None
             if device_label:
-                dev_row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (device_label,)
-                ).fetchone()
-                if dev_row:
-                    device_id = dev_row['id']
-                else:
-                    device_id = conn.execute(
-                        "INSERT INTO device (label, device_type) VALUES (?, ?)", 
-                        (device_label, "spot")
-                    ).lastrowid
+                device_id = self.get_or_create_device_id(device_label, "spot")
             
             try:
                 for analyte_label, analyte_id in analyte_lookup.items():
@@ -88,28 +77,16 @@ class SpotReadingsMixin:
         old_time = old_data.get("logtime")
         
         with self.get_connection() as conn:
-            new_marker_id = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (new_loc,)
-            ).fetchone()['id']
-            old_marker_id = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (old_loc,)
-            ).fetchone()['id']
+            new_marker_id = self.get_marker_id_by_label(new_loc)
+            if new_marker_id is None:
+                return False, "New location not found."
+            old_marker_id = self.get_marker_id_by_label(old_loc)
+            if old_marker_id is None:
+                return False, "Old location not found."
             
             new_device_id = None
             if new_dev:
-                dev_row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (new_dev,)
-                ).fetchone()
-                if dev_row:
-                    new_device_id = dev_row['id']
-                else:
-                    new_device_id = conn.execute(
-                        "INSERT INTO device (label, device_type) VALUES (?, ?)", 
-                        (new_dev, "spot")
-                    ).lastrowid
+                new_device_id = self.get_or_create_device_id(new_dev, "spot")
             
             new_analytes = {}
             for label, aid in analyte_lookup.items():
@@ -170,19 +147,13 @@ class SpotReadingsMixin:
         logtime = reading_data.get("logtime")
         
         with self.get_connection() as conn:
-            marker_id = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (location,)
-            ).fetchone()['id']
+            marker_id = self.get_marker_id_by_label(location)
+            if marker_id is None:
+                return
             
             device_id = None
             if device_label:
-                dev_row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (device_label,)
-                ).fetchone()
-                if dev_row:
-                    device_id = dev_row['id']
+                device_id = self.get_device_id_by_label(device_label)
             
             if device_id:
                 conn.execute(

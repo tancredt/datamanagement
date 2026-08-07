@@ -21,24 +21,13 @@ class AreaMixin:
     def add_area_location(self, location, device_label, start_dt, stop_dt, comment):
         """Adds a new area location monitoring period."""
         with self.get_connection() as conn:
-            marker_id = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (location,)
-            ).fetchone()['id']
+            marker_id = self.get_marker_id_by_label(location)
+            if marker_id is None:
+                return False, "Location not found."
             
             device_id = None
             if device_label:
-                dev_row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (device_label,)
-                ).fetchone()
-                if dev_row:
-                    device_id = dev_row['id']
-                else:
-                    device_id = conn.execute(
-                        "INSERT INTO device (label, device_type) VALUES (?, ?)", 
-                        (device_label, "area")
-                    ).lastrowid
+                device_id = self.get_or_create_device_id(device_label, "area")
             
             # Convert empty strings to None so SQLite stores NULL
             stop_dt = stop_dt if stop_dt else None
@@ -69,37 +58,20 @@ class AreaMixin:
         new_comment = new_data.get("comment")
         
         with self.get_connection() as conn:
-            old_marker_id = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (old_loc,)
-            ).fetchone()['id']
-            new_marker_id = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (new_loc,)
-            ).fetchone()['id']
+            old_marker_id = self.get_marker_id_by_label(old_loc)
+            if old_marker_id is None:
+                return False, "Old location not found."
+            new_marker_id = self.get_marker_id_by_label(new_loc)
+            if new_marker_id is None:
+                return False, "New location not found."
             
             old_device_id = None
             if old_dev:
-                row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (old_dev,)
-                ).fetchone()
-                if row:
-                    old_device_id = row['id']
+                old_device_id = self.get_device_id_by_label(old_dev)
             
             new_device_id = None
             if new_dev:
-                row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (new_dev,)
-                ).fetchone()
-                if row:
-                    new_device_id = row['id']
-                else:
-                    new_device_id = conn.execute(
-                        "INSERT INTO device (label, device_type) VALUES (?, ?)", 
-                        (new_dev, "area")
-                    ).lastrowid
+                new_device_id = self.get_or_create_device_id(new_dev, "area")
             
             # Convert empty strings to None so SQLite stores NULL
             new_stop = new_stop if new_stop else None
@@ -134,19 +106,13 @@ class AreaMixin:
         start_dt = data.get("start")
         
         with self.get_connection() as conn:
-            marker_id = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", 
-                (location,)
-            ).fetchone()['id']
+            marker_id = self.get_marker_id_by_label(location)
+            if marker_id is None:
+                return
             
             device_id = None
             if device_label:
-                row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (device_label,)
-                ).fetchone()
-                if row:
-                    device_id = row['id']
+                device_id = self.get_device_id_by_label(device_label)
             
             if device_id:
                 conn.execute(
@@ -198,17 +164,7 @@ class AreaMixin:
         with self.get_connection() as conn:
             device_id = None
             if device_label:
-                row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (device_label,)
-                ).fetchone()
-                if row:
-                    device_id = row['id']
-                else:
-                    device_id = conn.execute(
-                        "INSERT INTO device (label, device_type) VALUES (?, ?)", 
-                        (device_label, "area")
-                    ).lastrowid
+                device_id = self.get_or_create_device_id(device_label, "area")
             
             # Convert empty strings to None so SQLite stores NULL
             stop_dt = stop_dt if stop_dt else None
@@ -243,12 +199,7 @@ class AreaMixin:
         with self.get_connection() as conn:
             old_device_id = None
             if old_device:
-                row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (old_device,)
-                ).fetchone()
-                if row:
-                    old_device_id = row['id']
+                old_device_id = self.get_device_id_by_label(old_device)
             
             if old_device_id:
                 conn.execute(
@@ -263,17 +214,7 @@ class AreaMixin:
             
             new_device_id = None
             if new_device:
-                row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (new_device,)
-                ).fetchone()
-                if row:
-                    new_device_id = row['id']
-                else:
-                    new_device_id = conn.execute(
-                        "INSERT INTO device (label, device_type) VALUES (?, ?)", 
-                        (new_device, "area")
-                    ).lastrowid
+                new_device_id = self.get_or_create_device_id(new_device, "area")
             
             # Convert empty strings to None so SQLite stores NULL
             new_stop = new_stop if new_stop else None
@@ -303,12 +244,7 @@ class AreaMixin:
         with self.get_connection() as conn:
             device_id = None
             if device_label:
-                row = conn.execute(
-                    "SELECT id FROM device WHERE label = ?", 
-                    (device_label,)
-                ).fetchone()
-                if row:
-                    device_id = row['id']
+                device_id = self.get_device_id_by_label(device_label)
             
             if device_id:
                 conn.execute(
