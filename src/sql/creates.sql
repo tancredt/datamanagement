@@ -87,7 +87,7 @@ CREATE TABLE area_invalidations (
 -- Spectral analysis results
 CREATE TABLE spectral_result (
     id INTEGER PRIMARY KEY ASC,
-    chemicals TEXT NOT NULL,
+    chemicals TEXT,
     timestamp TEXT NOT NULL,
     comment TEXT,
     file_ref VARCHAR(64),
