@@ -639,6 +639,8 @@ class SummaryMapView(DataView):
         """
         Build marker data for spectral results.
         Aggregates all chemicals_identified values per site into a comma-delimited list.
+        If chemicals_identified is NULL/None, it's treated as an empty entry.
+        Displays "None" only if there are no chemicals at all for that marker.
         """
         markers = self.maps_data.get(selected_map, [])
         markers_data = []
@@ -654,6 +656,7 @@ class SummaryMapView(DataView):
                 if not site or site.lower() in ('', 'unassigned', 'nan'):
                     continue
                 chems_str = row.get('chemicals_identified', '')
+                # Handle NULL/None/empty values - skip them for aggregation
                 if not chems_str or pd.isna(chems_str):
                     continue
                 chems = [c.strip() for c in str(chems_str).split(',') if c.strip()]
@@ -668,7 +671,7 @@ class SummaryMapView(DataView):
             x = m.get('x_coord', m.get('x', 0))
             y = m.get('y_coord', m.get('y', 0))
 
-            if label in site_chemicals:
+            if label in site_chemicals and site_chemicals[label]:
                 # Build a multi-line text: chemicals as a comma-separated list
                 chems_list = sorted(site_chemicals[label])
                 chems_text = ', '.join(chems_list)
@@ -689,7 +692,8 @@ class SummaryMapView(DataView):
                 else:
                     text = chems_text
             else:
-                text = "N/A"
+                # No chemicals found for this marker - display "None"
+                text = "None"
 
             markers_data.append({'x': x, 'y': y, 'label': label, 'text': text})
 

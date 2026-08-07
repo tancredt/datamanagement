@@ -1,7 +1,8 @@
 import os
 import logging
+import pandas as pd
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QComboBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QCheckBox,
     QTableWidget, QTableWidgetItem, QPushButton, QDialogButtonBox,
     QLabel, QMessageBox, QHeaderView, QFormLayout, QDateTimeEdit, QLineEdit,
     QStyle
@@ -60,9 +61,15 @@ class AddSpectralRecordDialog(QDialog):
         form.addRow("Log Time *:", self.dt_logtime)
 
         self.le_chemicals = QLineEdit()
-        self.le_chemicals.setPlaceholderText("Compulsory: Chemicals identified...")
+        self.le_chemicals.setPlaceholderText("Chemicals identified...")
         self.le_chemicals.setMinimumHeight(28)
-        form.addRow("Chemicals Identified *:", self.le_chemicals)
+        self.le_chemicals.setEnabled(False)  # Disabled by default
+        form.addRow("Chemicals Identified:", self.le_chemicals)
+
+        self.chk_chemicals = QCheckBox("Chemicals Identified")
+        self.chk_chemicals.setChecked(False)
+        self.chk_chemicals.stateChanged.connect(self._toggle_chemicals_field)
+        form.addRow(self.chk_chemicals)
 
         self.le_comments = QLineEdit()
         self.le_comments.setPlaceholderText("Optional comments...")
@@ -82,7 +89,15 @@ class AddSpectralRecordDialog(QDialog):
             if dt.isValid():
                 self.dt_logtime.setDateTime(dt)
                 
-            self.le_chemicals.setText(self.initial_data.get("chemicals_identified", ""))
+            chemicals_val = self.initial_data.get("chemicals_identified", "")
+            if chemicals_val and not pd.isna(chemicals_val):
+                self.le_chemicals.setText(str(chemicals_val))
+                self.chk_chemicals.setChecked(True)
+                self.le_chemicals.setEnabled(True)
+            else:
+                self.le_chemicals.clear()
+                self.chk_chemicals.setChecked(False)
+                self.le_chemicals.setEnabled(False)
             self.le_comments.setText(self.initial_data.get("comments", ""))
             self.le_file_ref.setText(self.initial_data.get("file_ref", ""))
 
@@ -109,23 +124,37 @@ class AddSpectralRecordDialog(QDialog):
             self.cmb_device.setFocus()
             return
 
-        chemicals = self.le_chemicals.text().strip()
-        if not chemicals:
-            QMessageBox.warning(self, "Validation Error", "Chemicals Identified is mandatory.")
-            self.le_chemicals.setFocus()
-            return
+        # Only validate chemicals if checkbox is checked
+        if self.chk_chemicals.isChecked():
+            chemicals = self.le_chemicals.text().strip()
+            if not chemicals:
+                QMessageBox.warning(self, "Validation Error", "Chemicals Identified is mandatory when checkbox is checked.")
+                self.le_chemicals.setFocus()
+                return
 
         self.accept()
 
     def get_data(self):
+        # Return None for chemicals if checkbox is not checked
+        chemicals = None
+        if self.chk_chemicals.isChecked():
+            chemicals = self.le_chemicals.text().strip()
+        
         return {
             "location": self.cmb_location.currentText().strip(),
             "device": self.cmb_device.currentText().strip(),
             "logtime": self.dt_logtime.dateTime().toString(DATE_FORMAT),
-            "chemicals_identified": self.le_chemicals.text().strip(),
+            "chemicals_identified": chemicals,
             "comments": self.le_comments.text().strip(),
             "file_ref": self.le_file_ref.text().strip()
         }
+    
+    def _toggle_chemicals_field(self, state):
+        """Enable/disable the chemicals field based on checkbox state."""
+        is_checked = (state == Qt.Checked)
+        self.le_chemicals.setEnabled(is_checked)
+        if not is_checked:
+            self.le_chemicals.clear()
 
 
 class SpectralResultsDialog(QDialog):
