@@ -33,18 +33,26 @@ class ObservationWidget(QWidget):
         layout.addWidget(QLabel("Type:"))
         self.data_type_combo = QComboBox()
         self.data_type_combo.addItems(["spot", "area", "spectral", "exposure", "plume"])
+
         if obs_data and obs_data.get('data_type'):
             self.data_type_combo.setCurrentText(obs_data['data_type'])
+
         self.data_type_combo.setMinimumWidth(100)
+        self.data_type_combo.currentTextChanged.connect(self._on_data_type_changed)
         layout.addWidget(self.data_type_combo)
-        
+
         # Form
         layout.addWidget(QLabel("Form:"))
         self.form_combo = QComboBox()
-        self.form_combo.addItems(["Table", "Chart", "Summary Table", "Summary Chart", "Summary Map"])
-        if obs_data and obs_data.get('form'):
-            self.form_combo.setCurrentText(obs_data['form'])
         self.form_combo.setMinimumWidth(130)
+
+        self._update_form_for_data_type(self.data_type_combo.currentText())
+
+        if obs_data and obs_data.get('form'):
+            form = obs_data['form']
+            if self.form_combo.findText(form) >= 0:
+                self.form_combo.setCurrentText(form)
+
         layout.addWidget(self.form_combo)
         
         # Filter Button
@@ -73,6 +81,44 @@ class ObservationWidget(QWidget):
             self.filter_button.setText("Filter")
             self.filter_button.setStyleSheet("")
 
+    def _on_data_type_changed(self, text):
+        self._update_form_for_data_type(text)
+
+    def _update_form_for_data_type(self, data_type):
+        self.form_combo.blockSignals(True)
+
+        current_form = self.form_combo.currentText()
+        self.form_combo.clear()
+
+        if data_type == "spectral":
+            self.form_combo.addItems(["Table", "Summary Map"])
+            self.form_combo.setEnabled(True)
+
+        elif data_type == "exposure":
+            self.form_combo.addItems(["Summary Table", "Summary Chart", "Table"])
+            self.form_combo.setEnabled(True)
+
+        elif data_type == "plume":
+            self.form_combo.addItems(["Summary Map"])
+            self.form_combo.setEnabled(False)
+
+        else:
+            self.form_combo.addItems([
+                "Table",
+                "Chart",
+                "Summary Table",
+                "Summary Chart",
+                "Summary Map"
+            ])
+            self.form_combo.setEnabled(True)
+
+        if current_form and self.form_combo.findText(current_form) >= 0:
+            self.form_combo.setCurrentText(current_form)
+        else:
+            self.form_combo.setCurrentIndex(0)
+
+        self.form_combo.blockSignals(False)
+            
     def set_filter_data(self, data):
         self.filter_data = data
         self._update_filter_button_text()

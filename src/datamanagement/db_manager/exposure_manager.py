@@ -98,8 +98,8 @@ class ExposureMixin:
             exposure_id = conn.execute("""
                 INSERT INTO exposure 
                 (identifier, start_dt, stop_dt, area, activities, respiratory, 
-                 clothing, footwear)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 clothing, footwear, device_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (identifier, start_dt, stop_dt, area, activities, respiratory, 
                   clothing, footwear, device_id)).lastrowid
             

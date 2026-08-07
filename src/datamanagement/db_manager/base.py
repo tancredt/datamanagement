@@ -105,7 +105,7 @@ class DatabaseConnection:
         
         with open(devices_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        devices_list = data.get("devices") or data.get("devices ") or []
+        devices_list = data.get("devices") or []
                 
         with self.get_connection() as conn:
             cursor = conn.cursor()

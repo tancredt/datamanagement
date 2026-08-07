@@ -140,35 +140,6 @@ class MapMarkerMixin:
             conn.execute("DELETE FROM marker WHERE label = ?", (label,))
             conn.commit()
 
-    def remove_marker_from_map(self, marker_label, map_filename):
-        """Removes a marker from a specific map without deleting it from the marker table.
-        
-        This only removes the entry from sitemap_marker, keeping the marker definition intact.
-        """
-        with self.get_connection() as conn:
-            # Get marker_id from label
-            marker_row = conn.execute(
-                "SELECT id FROM marker WHERE label = ?", (marker_label,)
-            ).fetchone()
-            
-            if marker_row:
-                marker_id = marker_row[0]
-                
-                # Get sitemap_id from filename
-                sitemap_row = conn.execute(
-                    "SELECT id FROM sitemap WHERE filename = ?", (map_filename,)
-                ).fetchone()
-                
-                if sitemap_row:
-                    sitemap_id = sitemap_row[0]
-                    
-                    # Delete only the association in sitemap_marker
-                    conn.execute(
-                        "DELETE FROM sitemap_marker WHERE marker_id = ? AND sitemap_id = ?",
-                        (marker_id, sitemap_id)
-                    )
-                    conn.commit()
-
     def place_marker_on_map(self, marker_label, map_filename, x_coord, y_coord):
         """Places a marker on a specific map with pixel coordinates.
         
