@@ -11,6 +11,64 @@ class AccessorsMixin:
             rows = conn.execute(query).fetchall()
             return [dict(row) for row in rows]
 
+    def get_device_id_by_label(self, label):
+        """
+        Returns the device ID for a given device label.
+        
+        Args:
+            label: The device label string
+            
+        Returns:
+            int: The device ID if found, None otherwise
+        """
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT id FROM device WHERE label = ?", 
+                (label,)
+            ).fetchone()
+            return row['id'] if row else None
+
+    def get_or_create_device_id(self, label, device_type):
+        """
+        Returns the device ID for a given label, creating the device if it doesn't exist.
+        
+        Args:
+            label: The device label string
+            device_type: The type of device ('spot', 'area', 'spectral', 'personal')
+            
+        Returns:
+            int: The device ID (existing or newly created)
+        """
+        with self.get_connection() as conn:
+            dev_row = conn.execute(
+                "SELECT id FROM device WHERE label = ?", 
+                (label,)
+            ).fetchone()
+            if dev_row:
+                return dev_row['id']
+            else:
+                return conn.execute(
+                    "INSERT INTO device (label, device_type) VALUES (?, ?)", 
+                    (label, device_type)
+                ).lastrowid
+
+    def get_marker_id_by_label(self, label):
+        """
+        Returns the marker ID for a given marker label.
+        
+        Args:
+            label: The marker label string
+            
+        Returns:
+            int: The marker ID if found, None otherwise
+        """
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT id FROM marker WHERE label = ?", 
+                (label,)
+            ).fetchone()
+            return row['id'] if row else None
+
     def get_devices(self, data_type):
         """
         Returns list of device labels filtered by data_type.
