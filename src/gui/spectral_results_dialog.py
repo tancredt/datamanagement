@@ -12,6 +12,7 @@ from datamanagement.db_manager import IncidentDatabase
 from map_viewer_dialog import MapViewerDialog
 
 logger = logging.getLogger(__name__)
+
 DATE_FORMAT = "yyyy-MM-dd HH:mm:ss"
 
 
@@ -23,7 +24,7 @@ class AddSpectralRecordDialog(QDialog):
 
         # ✅ Populate choices directly from the database
         self.available_labels = self.db.get_markers()
-        self.available_devices = self.db.get_devices("spectral") # Only returns device_type == 'spectral'
+        self.available_devices = self.db.get_devices("spectral")  # Only returns device_type == 'spectral'
         self.initial_data = initial_data
 
         self.setWindowTitle("Edit Spectral Record" if initial_data else "Add Spectral Record")
@@ -60,16 +61,18 @@ class AddSpectralRecordDialog(QDialog):
         self.dt_logtime.setMinimumHeight(28)
         form.addRow("Log Time *:", self.dt_logtime)
 
-        self.le_chemicals = QLineEdit()
-        self.le_chemicals.setPlaceholderText("Chemicals identified...")
-        self.le_chemicals.setMinimumHeight(28)
-        self.le_chemicals.setEnabled(False)  # Disabled by default
-        form.addRow("Chemicals Identified:", self.le_chemicals)
-
-        self.chk_chemicals = QCheckBox("Chemicals Identified")
+        # Checkbox replaces the "Chemicals Identified:" label and sits above the edit.
+        # Unchecked (default) -> edit enabled and required.
+        # Checked             -> edit disabled, NULL saved for chemicals.
+        self.chk_chemicals = QCheckBox("No chemicals identified")
         self.chk_chemicals.setChecked(False)
         self.chk_chemicals.stateChanged.connect(self._toggle_chemicals_field)
         form.addRow(self.chk_chemicals)
+
+        self.le_chemicals = QLineEdit()
+        self.le_chemicals.setPlaceholderText("Chemicals identified...")
+        self.le_chemicals.setMinimumHeight(28)
+        form.addRow("", self.le_chemicals)
 
         self.le_comments = QLineEdit()
         self.le_comments.setPlaceholderText("Optional comments...")
@@ -84,20 +87,22 @@ class AddSpectralRecordDialog(QDialog):
         if self.initial_data:
             self.cmb_location.setCurrentText(self.initial_data.get("location", ""))
             self.cmb_device.setCurrentText(self.initial_data.get("device", ""))
-            
             dt = QDateTime.fromString(self.initial_data.get("logtime", ""), DATE_FORMAT)
             if dt.isValid():
                 self.dt_logtime.setDateTime(dt)
-                
+
             chemicals_val = self.initial_data.get("chemicals_identified", "")
             if chemicals_val and not pd.isna(chemicals_val):
-                self.le_chemicals.setText(str(chemicals_val))
-                self.chk_chemicals.setChecked(True)
-                self.le_chemicals.setEnabled(True)
-            else:
-                self.le_chemicals.clear()
+                # Has chemicals: box unchecked, edit enabled with value
                 self.chk_chemicals.setChecked(False)
+                self.le_chemicals.setEnabled(True)
+                self.le_chemicals.setText(str(chemicals_val))
+            else:
+                # NULL chemicals: box checked, edit disabled
+                self.chk_chemicals.setChecked(True)
                 self.le_chemicals.setEnabled(False)
+                self.le_chemicals.clear()
+
             self.le_comments.setText(self.initial_data.get("comments", ""))
             self.le_file_ref.setText(self.initial_data.get("file_ref", ""))
 
@@ -108,6 +113,7 @@ class AddSpectralRecordDialog(QDialog):
         btn_box.setMinimumHeight(34)
         layout.addWidget(btn_box)
         btn_box.rejected.connect(self.reject)
+
         ok_button = btn_box.button(QDialogButtonBox.Ok)
         ok_button.clicked.connect(self._validate_and_accept)
 
@@ -124,22 +130,25 @@ class AddSpectralRecordDialog(QDialog):
             self.cmb_device.setFocus()
             return
 
-        # Only validate chemicals if checkbox is checked
-        if self.chk_chemicals.isChecked():
+        # Chemicals are mandatory unless the "no chemicals" box is checked
+        if not self.chk_chemicals.isChecked():
             chemicals = self.le_chemicals.text().strip()
             if not chemicals:
-                QMessageBox.warning(self, "Validation Error", "Chemicals Identified is mandatory when checkbox is checked.")
+                QMessageBox.warning(
+                    self, "Validation Error",
+                    "Chemicals Identified is mandatory, or check 'No chemicals identified'."
+                )
                 self.le_chemicals.setFocus()
                 return
 
         self.accept()
 
     def get_data(self):
-        # Return None for chemicals if checkbox is not checked
+        # Checked -> store NULL; unchecked -> store entered chemicals
         chemicals = None
-        if self.chk_chemicals.isChecked():
-            chemicals = self.le_chemicals.text().strip()
-        
+        if not self.chk_chemicals.isChecked():
+            chemicals = self.le_chemicals.text().strip() or None
+
         return {
             "location": self.cmb_location.currentText().strip(),
             "device": self.cmb_device.currentText().strip(),
@@ -148,12 +157,12 @@ class AddSpectralRecordDialog(QDialog):
             "comments": self.le_comments.text().strip(),
             "file_ref": self.le_file_ref.text().strip()
         }
-    
+
     def _toggle_chemicals_field(self, state):
-        """Enable/disable the chemicals field based on checkbox state."""
+        """Checked ('no chemicals') disables the edit; unchecked enables it."""
         is_checked = (state == Qt.Checked)
-        self.le_chemicals.setEnabled(is_checked)
-        if not is_checked:
+        self.le_chemicals.setEnabled(not is_checked)
+        if is_checked:
             self.le_chemicals.clear()
 
 
@@ -165,13 +174,14 @@ class SpectralResultsDialog(QDialog):
 
         # ✅ Initialize Database Manager
         self.db = IncidentDatabase(incident_path)
-        
+
         # ✅ Load data directly from the DB
         self.all_readings = self.db.get_spectral_results()
-        self.available_labels = self.db.get_markers() # <-- FIXED: Use global get_markers()
+        self.available_labels = self.db.get_markers()  # <-- FIXED: Use global get_markers()
 
         self.setWindowTitle("Spectral Results Manager")
         self.resize(900, 500)
+
         self._setup_ui()
         self._connect_signals()
         self._populate_filter()
@@ -183,6 +193,7 @@ class SpectralResultsDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
 
         ctrl_row = QHBoxLayout()
+
         self.btn_show_maps = QPushButton("Show Map(s)")
         self.btn_show_maps.setMinimumHeight(32)
         self.btn_show_maps.setIcon(self.style().standardIcon(QStyle.SP_FileDialogListView))
@@ -230,8 +241,9 @@ class SpectralResultsDialog(QDialog):
         self.btn_remove.setIconSize(QSize(18, 18))
         self.btn_remove.setEnabled(False)
         btn_row.addWidget(self.btn_remove)
+
         btn_row.addStretch()
-        layout.addLayout(btn_row)  
+        layout.addLayout(btn_row)
 
         self.btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
         self.btn_box.setMinimumHeight(34)
@@ -242,7 +254,7 @@ class SpectralResultsDialog(QDialog):
         self.btn_add.clicked.connect(self._on_add)
         self.btn_edit.clicked.connect(self._on_edit)
         self.btn_remove.clicked.connect(self._on_remove)
-        self.btn_box.accepted.connect(self.accept) # Just closes dialog, data is already saved
+        self.btn_box.accepted.connect(self.accept)  # Just closes dialog, data is already saved
         self.cmb_filter.currentTextChanged.connect(self._update_table)
         self.table.currentCellChanged.connect(self._update_button_states)
 
@@ -261,8 +273,8 @@ class SpectralResultsDialog(QDialog):
 
     def _update_table(self):
         filter_val = self.cmb_filter.currentText()
-        rows_data = [(i, r) for i, r in enumerate(self.all_readings) if filter_val == "All" or r.get("location") == filter_val]
-
+        rows_data = [(i, r) for i, r in enumerate(self.all_readings)
+                     if filter_val == "All" or r.get("location") == filter_val]
         self.table.setRowCount(len(rows_data))
         for i, (orig_idx, r_data) in enumerate(rows_data):
             item = QTableWidgetItem(r_data.get("location", ""))
@@ -270,22 +282,24 @@ class SpectralResultsDialog(QDialog):
             self.table.setItem(i, 0, item)
             self.table.setItem(i, 1, QTableWidgetItem(r_data.get("device", "")))
             self.table.setItem(i, 2, QTableWidgetItem(r_data.get("logtime", "")))
-            self.table.setItem(i, 3, QTableWidgetItem(r_data.get("chemicals_identified", "")))
+            # Guard against NULL chemicals (checked box stores None)
+            self.table.setItem(i, 3, QTableWidgetItem(str(r_data.get("chemicals_identified") or "")))
             self.table.setItem(i, 4, QTableWidgetItem(r_data.get("comments", "")))
             self.table.setItem(i, 5, QTableWidgetItem(r_data.get("file_ref", "")))
-
         self.table.resizeRowsToContents()
         self._update_button_states()
 
     def _on_show_maps(self):
         maps_data = self.db.get_maps_data()
+
         # Translate x_coord/y_coord to x/y for the MapViewerDialog canvas
         for fname, markers in maps_data.items():
             for m in markers:
                 m['x'] = m.pop('x_coord', 0)
                 m['y'] = m.pop('y_coord', 0)
-                
-        available_markers = {fname: [m.get("label") for m in markers if m.get("label")] for fname, markers in maps_data.items()}
+
+        available_markers = {fname: [m.get("label") for m in markers if m.get("label")]
+                             for fname, markers in maps_data.items()}
         dialog = MapViewerDialog(self, available_markers, maps_data, self.mapping_dir)
         dialog.exec()
 
@@ -303,7 +317,7 @@ class SpectralResultsDialog(QDialog):
             )
             if success:
                 self.all_readings = self.db.get_spectral_results()
-                self._populate_filter() # Update filter dropdown with any new markers
+                self._populate_filter()  # Update filter dropdown with any new markers
                 self._update_table()
                 QMessageBox.information(self, "Added", "Record added.")
             else:
@@ -317,7 +331,7 @@ class SpectralResultsDialog(QDialog):
             if orig_idx is not None and 0 <= orig_idx < len(self.all_readings):
                 old_data = self.all_readings[orig_idx]
                 dialog = AddSpectralRecordDialog(
-                    self, 
+                    self,
                     incident_path=self.incident_path,
                     initial_data=old_data
                 )
