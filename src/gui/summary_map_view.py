@@ -653,7 +653,7 @@ class SummaryMapView(DataView):
                 and 'chemicals_identified' in self.filtered_data.columns):
             for _, row in self.filtered_data.iterrows():
                 site = str(row.get('SITE', '')).strip()
-                if not site or site.lower() in ('', 'unassigned', 'nan'):
+                if not site or site.lower() == '':
                     continue
                 chems_str = row.get('chemicals_identified', '')
                 # Handle NULL/None/empty values - skip them for aggregation

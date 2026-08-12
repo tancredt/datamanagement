@@ -63,7 +63,7 @@ class AddSpectralRecordDialog(QDialog):
 
         # Checkbox replaces the "Chemicals Identified:" label and sits above the edit.
         # Unchecked (default) -> edit enabled and required.
-        # Checked             -> edit disabled, NULL saved for chemicals.
+        # Checked ("No chemicals identified") -> edit disabled, NULL saved for chemicals.
         self.chk_chemicals = QCheckBox("No chemicals identified")
         self.chk_chemicals.setChecked(False)
         self.chk_chemicals.stateChanged.connect(self._toggle_chemicals_field)
@@ -130,7 +130,7 @@ class AddSpectralRecordDialog(QDialog):
             self.cmb_device.setFocus()
             return
 
-        # Chemicals are mandatory unless the "no chemicals" box is checked
+        # Chemicals are mandatory unless "No chemicals identified" is checked
         if not self.chk_chemicals.isChecked():
             chemicals = self.le_chemicals.text().strip()
             if not chemicals:
@@ -159,7 +159,7 @@ class AddSpectralRecordDialog(QDialog):
         }
 
     def _toggle_chemicals_field(self, state):
-        """Checked ('no chemicals') disables the edit; unchecked enables it."""
+        """Checking 'No chemicals identified' disables the edit; unchecking enables it."""
         is_checked = (state == Qt.Checked)
         self.le_chemicals.setEnabled(not is_checked)
         if is_checked:

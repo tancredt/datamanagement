@@ -108,7 +108,8 @@ CREATE TABLE exposure (
     activities TEXT,
     respiratory VARCHAR(16),
     clothing VARCHAR(16),
-    footwear VARCHAR(16)
+    footwear VARCHAR(16),
+    UNIQUE(identifier, start_dt)
 );
 
 -- Summary readings for exposure sessions
@@ -122,7 +123,8 @@ CREATE TABLE exposure_reading(
     device_id INTEGER NOT NULL,
     FOREIGN KEY (exposure_id) REFERENCES exposure (id) ON DELETE CASCADE,
     FOREIGN KEY (analyte_id) REFERENCES analyte (id) ON DELETE CASCADE,
-    FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE
+    FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE,
+    UNIQUE(exposure_id, analyte_id)
 );
 
 -- Plume modeling results

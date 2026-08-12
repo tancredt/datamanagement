@@ -77,7 +77,7 @@ def aggregate_data(df, interval, group_by, data_type="area"):
             agg_dict[col] = 'first'
 
     main_grouper = pd.Grouper(
-        freq=f'{interval_mins}min', closed='left',
+        freq=f'{interval_mins}min', closed='right',
         label='right', origin='start_day'
     )
     res_agg = agg_df.groupby([group_col, main_grouper]).agg(agg_dict)

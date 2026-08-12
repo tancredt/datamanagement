@@ -244,7 +244,11 @@ class DataView(QWidget):
                 analytes=analytes
             )
         elif self.data_type == "spectral":
-            self.raw_data = read_spectral_data(self.incident_path)
+            self.raw_data = read_spectral_data(
+                self.incident_path,
+                start_time=start, stop_time=stop,
+                devices=devices, sites=sites
+            )
         elif self.data_type == "exposure":
             self.raw_data = read_exposure_data(
                 self.incident_path,

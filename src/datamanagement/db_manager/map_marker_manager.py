@@ -160,7 +160,7 @@ class MapMarkerMixin:
                 ON CONFLICT(marker_id, sitemap_id) DO UPDATE SET
                     x_coord = excluded.x_coord,
                     y_coord = excluded.y_coord
-            """, (marker_row["id"], map_row["id"], x_coord, y_coord))
+            """, (marker_id, map_row["id"], x_coord, y_coord))
             conn.commit()
 
     def remove_marker_from_map(self, marker_label, map_filename):
