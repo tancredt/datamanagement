@@ -94,32 +94,53 @@ class ObjectivesManagerDialog(QDialog):
         if dialog.exec() == QDialog.Accepted:
             data = dialog.get_data()
             if data:
-                self.db.add_objective(data)
-                self._load_data()
-                QMessageBox.information(self, "Success", "Objective added successfully.")
+                obj_id = self.db.add_objective(data)
+                if obj_id:
+                    self._load_data()
+                    QMessageBox.information(self, "Success", "Objective added successfully.")
+                else:
+                    QMessageBox.warning(self, "Add Fialed", "Could not add objective.")
 
     def _on_edit(self):
         row = self.table.currentRow()
+
         if row >= 0:
             obj_data = self.objectives[row]
+
             dialog = ObjectiveFormDialog(self, self.incident_path, obj_data=obj_data)
+
             if dialog.exec() == QDialog.Accepted:
                 new_data = dialog.get_data()
-                if new_data:
-                    self.db.update_objective(obj_data['id'], new_data)
-                    self._load_data()
-                    QMessageBox.information(self, "Success", "Objective updated successfully.")
 
+                if new_data:
+                    success, message = self.db.update_objective(obj_data["id"], new_data)
+
+                    if success:
+                        self._load_data()
+                        QMessageBox.information(self, "Success", "Objective updated successfully.")
+                    else:
+                        QMessageBox.warning(self, "Update Failed", message or "Could not update objective.")
+                        
     def _on_delete(self):
         row = self.table.currentRow()
+
         if row >= 0:
             obj_data = self.objectives[row]
+
             reply = QMessageBox.question(
-                self, "Confirm Deletion",
-                f"Are you sure you want to delete the objective for zone '{obj_data.get('zone')}'?\n\nThis will also delete all associated observations.",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                self,
+                "Confirm Deletion",
+                f"Are you sure you want to delete the objective for zone '{obj_data.get('zone')}'?\n\n"
+                "This will also delete all associated observations.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
             )
+
             if reply == QMessageBox.Yes:
-                self.db.delete_objective(obj_data['id'])
-                self._load_data()
-                QMessageBox.information(self, "Success", "Objective deleted successfully.")
+                success, message = self.db.delete_objective(obj_data["id"])
+
+                if success:
+                    self._load_data()
+                    QMessageBox.information(self, "Success", "Objective deleted successfully.")
+                else:
+                    QMessageBox.warning(self, "Delete Failed", message or "Could not delete objective.")

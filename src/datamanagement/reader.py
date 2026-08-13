@@ -38,6 +38,17 @@ def _load_preferences(incident_path):
     return voc_corr, lel_corr
 
 
+def _safe_float(value):
+    """Convert a value to float where possible, returning NaN if not possible."""
+    if value is None:
+        return np.nan
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return np.nan
+
+
 def _apply_corrections(df, incident_path):
     """Applies VOC and LEL correction factors to the DataFrame."""
     if df is None or df.empty:
@@ -69,17 +80,6 @@ def _apply_corrections(df, incident_path):
     return df
 
 
-def _prepare_time_param(time_val):
-    """Ensures datetime parameters use a space instead of 'T' for SQLite string comparison."""
-    if time_val is None:
-        return None
-
-    if hasattr(time_val, "strftime"):
-        return time_val.strftime("%Y-%m-%d %H:%M:%S")
-
-    return str(time_val).replace("T", " ")
-
-
 def _apply_site_filter(query, params, sites):
     """
     Apply a site label filter.
@@ -109,19 +109,22 @@ def read_area_data(
     analytes=None,
     only_valid=False
 ):
-    """Read area monitoring data from the database with optional filters.
+    """Read area monitoring data from the database.
 
     Args:
         incident_path: Path to the incident folder.
-        start_time: Filter readings after this time.
-        stop_time: Filter readings before this time.
-        devices: List of device labels to include.
-        sites: List of site names to include.
-        analytes: List of analyte labels to include.
-        only_valid: If True, only include valid/non-invalidated readings.
+        start_time: Optional filter for readings after this time.
+        stop_time: Optional filter for readings before this time.
+        devices: Required non-empty list of device labels to include.
+        sites: Required non-empty list of site names to include.
+        analytes: Required non-empty list of analyte labels to include.
+        only_valid: If True, analyte values with INVALID_{analyte} > 0 are
+            treated as invalid and set to NaN. The INVALID flag itself is
+            preserved.
 
     Returns:
-        pandas.DataFrame: Area reading data.
+        pandas.DataFrame: Area reading data. Returns an empty DataFrame if
+        devices, sites, or analytes are missing or empty.
     """
     if (
         devices is None
@@ -176,9 +179,6 @@ def read_area_data(
         query += f" AND a.label IN ({placeholders})"
         params.extend(analytes)
 
-    if only_valid:
-        query += " AND ara.invalidation_id IS NULL"
-
     query += " ORDER BY ar.timestamp ASC"
 
     with db.get_connection() as conn:
@@ -229,8 +229,20 @@ def read_area_data(
         }
 
         for analyte in available_analytes:
-            row[analyte] = r.get(analyte)
-            row[f"INVALID_{analyte}"] = r.get(f"INVALID_{analyte}", 0)
+            invalid_col = f"INVALID_{analyte}"
+            invalid_value = r.get(invalid_col, 0)
+
+            row[invalid_col] = invalid_value
+
+            if only_valid:
+                invalid_numeric = pd.to_numeric(invalid_value, errors="coerce")
+
+                if pd.notna(invalid_numeric) and invalid_numeric > 0:
+                    row[analyte] = np.nan
+                else:
+                    row[analyte] = r.get(analyte)
+            else:
+                row[analyte] = r.get(analyte)
 
         rows_out.append(row)
 
@@ -256,18 +268,19 @@ def read_spot_data(
     sites=None,
     analytes=None
 ):
-    """Read spot monitoring data from the database with optional filters.
+    """Read spot monitoring data from the database.
 
     Args:
         incident_path: Path to the incident folder.
-        start_time: Filter readings after this time.
-        stop_time: Filter readings before this time.
-        devices: List of device labels to include.
-        sites: List of site names to include.
-        analytes: List of analyte labels to include.
+        start_time: Optional filter for readings after this time.
+        stop_time: Optional filter for readings before this time.
+        devices: Required non-empty list of device labels to include.
+        sites: Required non-empty list of site names to include.
+        analytes: Required non-empty list of analyte labels to include.
 
     Returns:
-        pandas.DataFrame: Spot reading data.
+        pandas.DataFrame: Spot reading data. Returns an empty DataFrame if
+        devices, sites, or analytes are missing or empty.
     """
     if (
         devices is None
@@ -299,15 +312,15 @@ def read_spot_data(
 
     if start_time:
         query += " AND sr.timestamp >= ?"
-        params.append(_prepare_time_param(start_time))
+        params.append(str(start_time))
 
     if stop_time:
         query += " AND sr.timestamp <= ?"
-        params.append(_prepare_time_param(stop_time))
+        params.append(str(stop_time))
 
     if devices:
         placeholders = ",".join(["?"] * len(devices))
-        query += f" AND (d.label IS NULL OR d.label IN ({placeholders}))"
+        query += f" AND d.label IN ({placeholders})"
         params.extend(devices)
 
     query, params = _apply_site_filter(query, params, sites)
@@ -387,17 +400,18 @@ def read_spectral_data(
     devices=None,
     sites=None
 ):
-    """Read spectral data from the database with optional filters.
+    """Read spectral data from the database.
 
     Args:
         incident_path: Path to the incident folder.
-        start_time: Filter readings after this time.
-        stop_time: Filter readings before this time.
-        devices: List of device labels to include.
-        sites: List of site names to include.
+        start_time: Optional filter for readings after this time.
+        stop_time: Optional filter for readings before this time.
+        devices: Required non-empty list of device labels to include.
+        sites: Required non-empty list of site names to include.
 
     Returns:
-        pandas.DataFrame: Spectral reading data.
+        pandas.DataFrame: Spectral reading data. Returns an empty DataFrame if
+        devices or sites are missing or empty.
     """
     if devices is None or devices == [] or sites is None or sites == []:
         return pd.DataFrame()
@@ -421,11 +435,11 @@ def read_spectral_data(
 
     if start_time:
         query += " AND sr.timestamp >= ?"
-        params.append(_prepare_time_param(start_time))
+        params.append(str(start_time))
 
     if stop_time:
         query += " AND sr.timestamp <= ?"
-        params.append(_prepare_time_param(stop_time))
+        params.append(str(stop_time))
 
     if devices:
         placeholders = ",".join(["?"] * len(devices))
@@ -475,17 +489,18 @@ def read_exposure_data(
     devices=None,
     analytes=None
 ):
-    """Read exposure data from the database with optional filters.
+    """Read exposure data from the database.
 
     Args:
         incident_path: Path to the incident folder.
-        start_time: Filter readings after this time.
-        stop_time: Filter readings before this time.
-        devices: List of device labels to include.
-        analytes: List of analyte labels to include.
+        start_time: Optional filter for readings after this time.
+        stop_time: Optional filter for readings before this time.
+        devices: Required non-empty list of exposure identifiers to include.
+        analytes: Required non-empty list of analyte labels to include.
 
     Returns:
-        pandas.DataFrame: Exposure reading data.
+        pandas.DataFrame: Exposure reading data. Returns an empty DataFrame if
+        devices or analytes are missing or empty.
     """
     logger.info(
         "Exposure filters → devices=%s | analytes=%s | %s → %s",
@@ -528,11 +543,11 @@ def read_exposure_data(
 
     if start_time:
         query += " AND e.start_dt >= ?"
-        params.append(_prepare_time_param(start_time))
+        params.append(str(start_time))
 
     if stop_time:
         query += " AND e.start_dt <= ?"
-        params.append(_prepare_time_param(stop_time))
+        params.append(str(stop_time))
 
     if analytes:
         placeholders = ",".join(["?"] * len(analytes))
@@ -601,14 +616,18 @@ def read_exposure_data(
                 v = values[analyte]
 
                 if isinstance(v, dict):
-                    if v.get("min") is not None:
-                        row[f"{analyte}_min"] = float(v["min"])
+                    min_value = _safe_float(v.get("min"))
+                    max_value = _safe_float(v.get("max"))
+                    mean_value = _safe_float(v.get("mean"))
 
-                    if v.get("max") is not None:
-                        row[f"{analyte}_max"] = float(v["max"])
+                    if pd.notna(min_value):
+                        row[f"{analyte}_min"] = min_value
 
-                    if v.get("mean") is not None:
-                        row[f"{analyte}_mean"] = float(v["mean"])
+                    if pd.notna(max_value):
+                        row[f"{analyte}_max"] = max_value
+
+                    if pd.notna(mean_value):
+                        row[f"{analyte}_mean"] = mean_value
 
         rows_out.append(row)
 
@@ -627,7 +646,7 @@ def read_exposure_data(
 # ==========================================
 
 def read_battery_data(incident_path, device_label=None):
-    """Read battery data from the database with optional device filter.
+    """Read battery data from the database with an optional device filter.
 
     Args:
         incident_path: Path to the incident folder.

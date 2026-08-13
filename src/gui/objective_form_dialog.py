@@ -95,7 +95,7 @@ class ObservationWidget(QWidget):
             self.form_combo.setEnabled(True)
 
         elif data_type == "exposure":
-            self.form_combo.addItems(["Summary Table", "Summary Chart", "Table"])
+            self.form_combo.addItems(["Summary Table", "Summary Chart"])
             self.form_combo.setEnabled(True)
 
         elif data_type == "plume":
@@ -239,9 +239,6 @@ class ObjectiveFormDialog(QDialog):
             json_filters.pop('sites_count', None)
             json_filters.pop('devices_count', None)
             json_filters.pop('analytes_count', None)
-            if 'selected_sites' in json_filters and isinstance(json_filters['selected_sites'], list):
-                json_filters['selected_sites'] = [s for s in json_filters['selected_sites'] if s != "Unassigned"]
-                
             for key in ('start_time', 'stop_time'):
                 if hasattr(json_filters.get(key), 'strftime'):
                     json_filters[key] = json_filters[key].strftime("%Y-%m-%d %H:%M")

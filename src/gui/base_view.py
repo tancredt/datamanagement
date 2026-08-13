@@ -1,5 +1,4 @@
 import os
-import json
 import logging
 import tempfile
 import pandas as pd
@@ -107,58 +106,71 @@ class DataView(QWidget):
     # CONFIG LOADING
     # ─────────────────────────────────────────────────────────
     def _load_configs(self):
-        """Load analytes from the database and thresholds from JSON."""
-        if self.db:
-            try:
-                analytes = self.db.get_analytes()
-                for a in analytes:
-                    label = a['label']
-                    self.available_analytes.append(label)
-                    self.analyte_dec_pls[label] = a.get('dec_pls', 2)
-            except Exception as e:
-                logger.error(f"Failed to load analytes from DB: {e}")
+        """Load analytes and thresholds from the database."""
+        if not self.db:
+            return
+
+        # Reset cached config data so repeated refreshes do not duplicate entries.
+        self.available_analytes = []
+        self.analyte_dec_pls = {}
+        self.thresholds_lookup = {}
+
+        try:
+            analytes = self.db.get_analytes()
+
+            for a in analytes:
+                label = a.get("label")
+
+                if not label:
+                    continue
+
+                self.available_analytes.append(label)
+                self.analyte_dec_pls[label] = a.get("dec_pls", 2)
                 
-        if self.incident_path:
-            thresholds_file = os.path.join(self.incident_path, "meta", "thresholds.json")
-            if os.path.exists(thresholds_file):
-                try:
-                    with open(thresholds_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    for t in data.get("thresholds", []):
-                        clean = {k.strip(): v for k, v in t.items()}
-                        analyte_name = str(clean.get("analyte", "")).strip()
-                        if analyte_name:
-                            entry = {}
-                            for key in ["hotzone_value", "warmzone_value",
-                                        "fireground_value", "community_value"]:
-                                raw = clean.get(key, "0")
-                                try:
-                                    entry[key] = float(str(raw).strip())
-                                except (ValueError, TypeError):
-                                    entry[key] = 0.0
-                            self.thresholds_lookup[analyte_name.upper()] = entry
-                except Exception as e:
-                    logger.error(f"Failed to load thresholds: {e}")
+        except Exception as e:
+            logger.error(f"Failed to load analytes from DB: {e}")
+
+        try:
+            thresholds = self.db.get_all_thresholds()
+
+            for t in thresholds:
+                analyte_name = str(t.get("label", "")).strip()
+
+                if not analyte_name:
+                    continue
+
+                self.thresholds_lookup[analyte_name.upper()] = {
+                    "hotzone_value": t.get("hotzone_threshold"),
+                    "warmzone_value": t.get("warmzone_threshold"),
+                    "fireground_value": t.get("fireground_threshold"),
+                    "community_value": t.get("community_threshold")
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to load thresholds from DB: {e}")
 
     # ─────────────────────────────────────────────────────────
     # FILTER LOADING
     # ─────────────────────────────────────────────────────────
     def _load_filter_summary(self):
-        """Load filter summary from meta/last_filters.json using FilterManager."""
+        """Load filter summary through FilterManager."""
         if not self.incident_path:
-            self.filter_summary = {}
+            self.filter_summary = self._get_default_filters()
             return
-        
+
         try:
-            filter_manager = FilterManager(self.incident_path)
-            raw = filter_manager.load_filters()
-            
-            # If file didn't exist, get defaults based on data type
-            if not raw or not any(raw.values()):
+            filter_manager = FilterManager(self.incident_path, self.data_type)
+            loaded_filters = filter_manager.load_filters()
+
+            if (
+                    not loaded_filters
+                    or loaded_filters.get("start_time") is None
+                    or loaded_filters.get("stop_time") is None
+            ):
                 self.filter_summary = self._get_default_filters()
-                return
-            
-            self.filter_summary = raw
+            else:
+                self.filter_summary = loaded_filters
+
         except Exception as e:
             logger.error(f"Failed to load filter summary: {e}")
             self.filter_summary = self._get_default_filters()

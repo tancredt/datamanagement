@@ -1,7 +1,6 @@
 import os
 import sys
 import glob
-import json
 import logging
 import datetime
 
@@ -44,7 +43,7 @@ from summary_map_view import SummaryMapView
 from filter_dialog import FilterDialog
 from thresholds_dialog import ThresholdsDialog
 
-from datamanagement.filter import FilterManager
+from datamanagement.filter import FilterManager, DEVICE_KEY_MAP
 from datamanagement.importer import copy_files_to_realtime, import_area_data
 from datamanagement.db_manager import IncidentDatabase
 
@@ -92,15 +91,6 @@ VIEW_CONSTRAINTS = {
     "exposure": {"enabled": [2, 3],          "default": 2},
     "plume":    {"enabled": [4],             "default": 4},
 }
-
-# This is for the filter summary to work out which set of devices to use
-DEVICE_KEY_MAP = {
-    "area": "selected_area_devices",
-    "spot": "selected_spot_devices",
-    "spectral": "selected_spectral_devices",
-    "exposure": "selected_exposure_identifiers",
-}
-
 
 class CopyWorker(QObject):
     finished = Signal(int)
@@ -499,11 +489,11 @@ class DataAnalyzerGUI(QMainWindow):
         self.action_battery = area_menu.addAction("&Battery...", self._on_battery_analysis)
         self.action_last_readings = area_menu.addAction("&Last Readings...", self._on_last_readings)
 
-        spectral_menu = data_menu.addMenu("&Spectral Results")
-        self.action_spectral_results = spectral_menu.addAction("&Results...", self._on_spectral_results)
+        spectral_menu = data_menu.addMenu("&Spectral Records")
+        self.action_spectral_results = spectral_menu.addAction("&Records...", self._on_spectral_results)
 
         exposure_menu = data_menu.addMenu("E&xposures")
-        self.action_exposures = exposure_menu.addAction("&Exposures...", self._on_exposures)
+        self.action_exposures = exposure_menu.addAction("&Records...", self._on_exposures)
 
         self.action_plumes = data_menu.addAction("&Plumes...", self._on_plumes)
 
@@ -580,7 +570,7 @@ class DataAnalyzerGUI(QMainWindow):
             return {}
 
         try:
-            filter_manager = FilterManager(self.active_incident_path)
+            filter_manager = FilterManager(self.active_incident_path, self.data_type)
             return filter_manager.load_filters()
         except Exception as e:
             logger.error(f"Failed to read filter file: {e}")
@@ -688,40 +678,20 @@ class DataAnalyzerGUI(QMainWindow):
 
     def _refresh_current_view(self):
         """
-        Refreshes the currently active view by recreating only that view.
+        Clears all cached views and recreates only the currently active one.
+        This ensures no stale views remain in the stack after data changes.
         """
         current_idx = getattr(self, "_current_view_index", None)
-
         if current_idx is None:
             current_idx = next(
                 (idx for idx, btn in self.nav_btns.items() if btn.isChecked()),
                 0
             )
 
-        import matplotlib.pyplot as plt
+        # Clear ALL views from the stack (same as filter change)
+        self._clear_current_views()
 
-        current_widget = self.view_stack.currentWidget()
-
-        if current_widget:
-            expected_class = self._get_view_class_for_index(current_idx)
-
-            if expected_class and isinstance(current_widget, expected_class):
-                self.view_stack.removeWidget(current_widget)
-
-                if hasattr(current_widget, "figure"):
-                    try:
-                        plt.close(current_widget.figure)
-                    except Exception:
-                        pass
-
-                if hasattr(current_widget, "summary_figure"):
-                    try:
-                        plt.close(current_widget.summary_figure)
-                    except Exception:
-                        pass
-
-                current_widget.deleteLater()
-
+        # Recreate only the current view
         self._load_view(current_idx)
 
     # ─────────────────────────────────────────────────────────
@@ -933,31 +903,6 @@ class DataAnalyzerGUI(QMainWindow):
     # ─────────────────────────────────────────────────────────
     # MENU ACTIONS
     # ─────────────────────────────────────────────────────────
-    def _launch_objective_dialog(self, zone_name):
-        if not self.active_incident_path:
-            self._update_status_bar("⚠️ No active incident.")
-            return
-
-        try:
-            from objective_dialog import ObjectiveDialog
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Missing Dialog",
-                f"Could not load ObjectiveDialog:\n{e}"
-            )
-            return
-
-        current_data_type = self.data_type if self.data_type in ["spot", "area"] else "area"
-
-        dialog = ObjectiveDialog(
-            self,
-            self.active_incident_path,
-            zone_name=zone_name,
-            data_type=current_data_type
-        )
-        dialog.exec()
-
     @Slot()
     def _on_manage_thresholds(self):
         if not self.active_incident_path:
