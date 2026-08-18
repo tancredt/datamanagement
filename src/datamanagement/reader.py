@@ -80,22 +80,6 @@ def _apply_corrections(df, incident_path):
     return df
 
 
-def _apply_site_filter(query, params, sites):
-    """
-    Apply a site label filter.
-
-    This assumes site labels are stored exactly as supplied by the caller.
-    """
-    if not sites:
-        return query, params
-
-    placeholders = ",".join(["?"] * len(sites))
-    query += f" AND m.label IN ({placeholders})"
-    params.extend(sites)
-
-    return query, params
-
-
 # ==========================================
 # 2. AREA DATA
 # ==========================================
@@ -126,16 +110,6 @@ def read_area_data(
         pandas.DataFrame: Area reading data. Returns an empty DataFrame if
         devices, sites, or analytes are missing or empty.
     """
-    if (
-        devices is None
-        or devices == []
-        or sites is None
-        or sites == []
-        or analytes is None
-        or analytes == []
-    ):
-        return pd.DataFrame()
-
     db = IncidentDatabase(incident_path)
 
     query = """
@@ -172,7 +146,10 @@ def read_area_data(
         query += f" AND d.label IN ({placeholders})"
         params.extend(devices)
 
-    query, params = _apply_site_filter(query, params, sites)
+    if sites:
+        placeholders = ",".join(["?"] * len(sites))
+        query += f" AND (m.label IN ({placeholders}))"
+        params.extend(sites)
 
     if analytes:
         placeholders = ",".join(["?"] * len(analytes))
@@ -182,6 +159,7 @@ def read_area_data(
     query += " ORDER BY ar.timestamp ASC"
 
     with db.get_connection() as conn:
+        conn.set_trace_callback(print)
         rows = conn.execute(query, params).fetchall()
 
     readings_dict = {}
@@ -282,16 +260,6 @@ def read_spot_data(
         pandas.DataFrame: Spot reading data. Returns an empty DataFrame if
         devices, sites, or analytes are missing or empty.
     """
-    if (
-        devices is None
-        or devices == []
-        or sites is None
-        or sites == []
-        or analytes is None
-        or analytes == []
-    ):
-        return pd.DataFrame()
-
     db = IncidentDatabase(incident_path)
 
     query = """
@@ -323,7 +291,10 @@ def read_spot_data(
         query += f" AND d.label IN ({placeholders})"
         params.extend(devices)
 
-    query, params = _apply_site_filter(query, params, sites)
+    if sites:
+        placeholders = ",".join(["?"] * len(sites))
+        query += f" AND (m.label IN ({placeholders}))"
+        params.extend(sites)
 
     if analytes:
         placeholders = ",".join(["?"] * len(analytes))
@@ -413,9 +384,6 @@ def read_spectral_data(
         pandas.DataFrame: Spectral reading data. Returns an empty DataFrame if
         devices or sites are missing or empty.
     """
-    if devices is None or devices == [] or sites is None or sites == []:
-        return pd.DataFrame()
-
     db = IncidentDatabase(incident_path)
 
     query = """
@@ -446,7 +414,10 @@ def read_spectral_data(
         query += f" AND d.label IN ({placeholders})"
         params.extend(devices)
 
-    query, params = _apply_site_filter(query, params, sites)
+    if sites:
+        placeholders = ",".join(["?"] * len(sites))
+        query += f" AND (m.label IN ({placeholders}))"
+        params.extend(sites)
 
     query += " ORDER BY sr.timestamp ASC"
 
@@ -509,14 +480,6 @@ def read_exposure_data(
         start_time,
         stop_time
     )
-
-    if (
-        devices is None
-        or devices == []
-        or analytes is None
-        or analytes == []
-    ):
-        return pd.DataFrame()
 
     db = IncidentDatabase(incident_path)
 

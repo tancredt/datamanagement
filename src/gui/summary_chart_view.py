@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from base_view import DataView
 # Import the table view to reuse its calculation logic
 from summary_table_view import SummaryTableView
+from datamanagement.grouping import calculate_summary_dataframe
 
 
 class SummaryChartView(DataView):
@@ -116,8 +117,8 @@ class SummaryChartView(DataView):
             valid_analytes = [g for g in selected_analytes if g in df.columns]
 
         # ✅ CALL THE SHARED FUNCTION (No more temp_table hack!)
-        from datamanagement.grouping import calculate_summary_dataframe
-        summary_df = calculate_summary_dataframe(df, group_col, valid_analytes, is_exposure)
+        only_valid = self.filter_summary.get("only_valid", False)
+        summary_df = calculate_summary_dataframe(df, group_col, valid_analytes, is_exposure, only_valid=only_valid)
         
         # Convert to tuple format for _redraw
         self.summary_data = []

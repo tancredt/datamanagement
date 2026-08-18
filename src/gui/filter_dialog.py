@@ -362,8 +362,10 @@ class FilterDialog(QDialog):
         ):
             self.group_by_combo.setEnabled(False)
             self.group_by_combo.setCurrentText("Site")
-            self.site_group.set_enabled(True)
-            self.device_group.set_enabled(False)
+            self.site_group.setVisible(True)
+            self.site_group.setEnabled(True)
+            self.device_group.setVisible(False)
+            self.device_group.setEnabled(False)
         else:
             self.group_by_combo.setEnabled(True)
             self._on_group_by_changed(self.group_by_combo.currentText())
@@ -443,11 +445,15 @@ class FilterDialog(QDialog):
 
     def _on_group_by_changed(self, group_by_text):
         if group_by_text == "Identifier":
-            self.site_group.set_enabled(False)
-            self.device_group.set_enabled(True)
+            self.site_group.setVisible(False)
+            self.site_group.setEnabled(False)
+            self.device_group.setVisible(True)
+            self.device_group.setEnabled(True)
         elif group_by_text == "Site":
-            self.site_group.set_enabled(True)
-            self.device_group.set_enabled(False)
+            self.site_group.setVisible(True)
+            self.site_group.setEnabled(True)
+            self.device_group.setVisible(False)
+            self.device_group.setEnabled(False)
 
     def _populate_filters(self):
         self._set_time_range()
@@ -624,12 +630,12 @@ class FilterDialog(QDialog):
         if self.site_group.isEnabled() and self.site_group.isVisible():
             selected_sites = self.site_group.get_checked_items()
         else:
-            selected_sites = list(self.available_locations)
+            selected_sites = []
 
         if self.device_group.isEnabled():
             selected_devices = self.device_group.get_checked_items()
         else:
-            selected_devices = list(self.available_devices)
+            selected_devices = []
 
         if self.data_type in ("spectral", "plume"):
             selected_analytes = []

@@ -8,8 +8,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QColor
 
-# Import the new self-contained base class
 from base_view import DataView
+from datamanagement.grouping import calculate_summary_dataframe
 
 THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
 
@@ -105,8 +105,8 @@ class SummaryTableView(DataView):
             valid_analytes = [g for g in selected_analytes if g in df.columns]
 
         # ✅ 3. CALL THE SHARED FUNCTION
-        from datamanagement.grouping import calculate_summary_dataframe
-        summary_df = calculate_summary_dataframe(df, group_col, valid_analytes, is_exposure)
+        only_valid = self.filter_summary.get("only_valid", False)
+        summary_df = calculate_summary_dataframe(df, group_col, valid_analytes, is_exposure, only_valid=only_valid)
 
         self.summary_table.setHorizontalHeaderLabels([group_by_label, "Analyte", "Mean", "Maximum", "Min", "Count"])
         

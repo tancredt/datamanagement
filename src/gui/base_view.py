@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QWidget, QApplication, QProgressDialog
 from PySide6.QtCore import Qt
 from datamanagement.db_manager import IncidentDatabase
 from datamanagement.filter import FilterManager, DEVICE_KEY_MAP
+from datamanagement.grouping import aggregate_data
 
 logger = logging.getLogger(__name__)
 
@@ -211,10 +212,7 @@ class DataView(QWidget):
     # DATA LOADING (DB queries with filters)
     # ─────────────────────────────────────────────────────────
     def _load_raw_data(self):
-        """Load data from the database using filter_summary parameters."""
-        print(f"\n{'='*20} DEBUG: _load_raw_data ({self.__class__.__name__}) {'='*20}")
-        print(f"Data Type: {self.data_type}")
-        
+        """Load data from the database using filter_summary parameters."""        
         if not self.incident_path:
             print("DEBUG: No incident_path!")
             return
@@ -233,12 +231,12 @@ class DataView(QWidget):
         analytes = self.filter_summary.get('selected_analytes')
         only_valid = self.filter_summary.get('only_valid', False)
 
-        print(f"DEBUG: start={start} (type: {type(start)})")
-        print(f"DEBUG: stop={stop} (type: {type(stop)})")
-        print(f"DEBUG: devices={devices}")
-        print(f"DEBUG: sites={sites}")
-        print(f"DEBUG: analytes={analytes}")
-        print(f"DEBUG: only_valid={only_valid}")
+        #override sites and devices depending on groupby
+        group_by = str(self.filter_summary.get('group_by', '')).strip().lower()
+        if group_by == 'device':
+            sites = []
+        elif group_by == 'site':
+            devices = []
 
         if self.data_type == "area":
             self.raw_data = read_area_data(
@@ -290,14 +288,14 @@ class DataView(QWidget):
         interval = self.filter_summary.get("interval", "Raw")
         if interval != "Raw" and self.data_type == "area":
             from datamanagement.grouping import aggregate_data
+            only_valid = self.filter_summary.get("only_valid", False)
             self.filtered_data = aggregate_data(
                 df=self.filtered_data,
                 interval=interval,
                 group_by=self.filter_summary.get('group_by', 'Device'),
-                data_type=self.data_type
+                data_type=self.data_type,
+                only_valid=only_valid
             )
-            print(f"DEBUG: After aggregation, shape: {self.filtered_data.shape}")
-            print(f"DEBUG: After aggregation, columns: {list(self.filtered_data.columns)}")
 
     def apply_filters(self):
         """Re-query DB and re-aggregate. Called by set_filter_summary."""

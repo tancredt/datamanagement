@@ -1,180 +1,68 @@
+"""Table View Widget"""
 import os
-import sys
+import logging
 import pandas as pd
 import numpy as np
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
-    QPushButton, QLabel, QHeaderView, QFileDialog, QMessageBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QFileDialog, QMessageBox
 )
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont
 
-# Import the base class
 from base_view import DataView
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+logger = logging.getLogger(__name__)
 
-INVALID_BG_COLOR = QColor(255, 200, 200)
 THRESHOLD_EXCEEDED_COLOR = QColor(255, 0, 0)
+INVALID_BG_COLOR = QColor(255, 235, 235)
+INVALID_FG_COLOR = QColor(180, 60, 60)
 
-# ─────────────────────────────────────────────────────────
-# Paginated Table Model
-# ─────────────────────────────────────────────────────────
-class PaginatedTableModel(QAbstractTableModel):
-    def __init__(self, dec_pls_dict=None, page_size=100):
-        super().__init__()
-        self._full_df = pd.DataFrame()
+
+class PaginatedTableModel:
+    """Manages pagination over a DataFrame."""
+
+    PAGE_SIZE = 500
+
+    def __init__(self, df):
+        self._full_df = df if df is not None else pd.DataFrame()
+        self.current_page = 0
         self._current_df = pd.DataFrame()
-        self.dec_pls_dict = dec_pls_dict if dec_pls_dict is not None else {}
-        self.page_size = page_size
-        self.current_page = 0
-        self.total_pages = 0
-        self._invalid_cells = set()
-        self._show_invalid_bg = True
-        self._active_thresholds = {}
-        self.update_page()
+        self._update_page()
 
-    def set_show_invalid_bg(self, show: bool):
-        self._show_invalid_bg = show
+    @property
+    def total_pages(self):
+        if self._full_df.empty:
+            return 0
+        return max(1, (len(self._full_df) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
 
-    def set_active_thresholds(self, thresholds: dict):
-        self._active_thresholds = thresholds
-
-    def set_data(self, df):
-        self.beginResetModel()
-        self._full_df = df if df is not None and not df.empty else pd.DataFrame()
-        self.current_page = 0
-        self._rebuild_invalid_cache()
-        self.update_page()
-        self.endResetModel()
-
-    def update_page(self):
-        if len(self._full_df) == 0:
+    def _update_page(self):
+        if self._full_df.empty:
             self._current_df = pd.DataFrame()
-            self.total_pages = 0
-        else:
-            self.total_pages = (len(self._full_df) + self.page_size - 1) // self.page_size
-            start = self.current_page * self.page_size
-            end = start + self.page_size
-            self._current_df = self._full_df.iloc[start:end]
+            return
+        start = self.current_page * self.PAGE_SIZE
+        end = start + self.PAGE_SIZE
+        self._current_df = self._full_df.iloc[start:end].reset_index(drop=True)
 
     def next_page(self):
         if self.current_page < self.total_pages - 1:
-            self.beginResetModel()
             self.current_page += 1
-            self.update_page()
-            self.endResetModel()
+            self._update_page()
             return True
         return False
 
     def prev_page(self):
         if self.current_page > 0:
-            self.beginResetModel()
             self.current_page -= 1
-            self.update_page()
-            self.endResetModel()
+            self._update_page()
             return True
         return False
 
-    def rowCount(self, parent=QModelIndex()):
-        return len(self._current_df)
 
-    def columnCount(self, parent=QModelIndex()):
-        return len(self._current_df.columns)
-
-    def _rebuild_invalid_cache(self):
-        self._invalid_cells = set()
-        if self._full_df.empty:
-            return
-        analyte_cols = [c for c in self._full_df.columns if c in self.dec_pls_dict]
-        for analyte in analyte_cols:
-            inv_col = next((c for c in self._full_df.columns if c.upper() == f"INVALID_{analyte}".upper()), None)
-            if inv_col:
-                invalid_mask = pd.to_numeric(self._full_df[inv_col], errors='coerce').fillna(0) > 0
-                for idx in self._full_df.index[invalid_mask]:
-                    self._invalid_cells.add((idx, analyte))
-
-    def _is_cell_invalid(self, row, col_name):
-        if col_name not in self.dec_pls_dict:
-            return False
-        global_idx = self._current_df.index[row]
-        return (global_idx, col_name) in self._invalid_cells
-
-    def _is_threshold_exceeded(self, col_name, val):
-        if col_name not in self._active_thresholds:
-            return False
-        if not isinstance(val, (int, float, np.floating, np.integer)):
-            return False
-        if pd.isna(val):
-            return False
-        threshold = self._active_thresholds[col_name]
-        if col_name.upper().startswith("O2"):
-            return val < threshold
-        else:
-            return val > threshold
-
-    def _get_dec_pls_for_column(self, col_name):
-        """Return decimal places for a column, handling _min/_max/_mean suffixes."""
-        if col_name in self.dec_pls_dict:
-            return self.dec_pls_dict[col_name]
-        for suffix in ('_min', '_max', '_mean', '_count'):
-            if col_name.endswith(suffix):
-                base = col_name[:-len(suffix)]
-                if base in self.dec_pls_dict:
-                    return self.dec_pls_dict[base]
-        return None
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        row = index.row()
-        col = index.column()
-        col_name = self._current_df.columns[col]
-        cell_invalid = self._is_cell_invalid(row, col_name)
-        val = self._current_df.iloc[row, col]
-
-        if role == Qt.BackgroundRole:
-            if self._show_invalid_bg and cell_invalid:
-                return INVALID_BG_COLOR
-            return None
-
-        if role == Qt.ForegroundRole:
-            if self._is_threshold_exceeded(col_name, val):
-                return THRESHOLD_EXCEEDED_COLOR
-            return None
-
-        if role != Qt.DisplayRole:
-            return None
-
-        if col_name.upper().startswith("INVALID_"):
-            return ""
-        if pd.isna(val):
-            return ""
-
-        # Use helper so aggregated cols (_min, _max, _mean) also format correctly
-        dec_pls = self._get_dec_pls_for_column(col_name)
-        if dec_pls is not None and isinstance(val, (int, float, np.floating, np.integer)):
-            return f"{val:.{dec_pls}f}"
-        elif isinstance(val, pd.Timestamp):
-            return val.strftime("%Y-%m-%d %H:%M:%S")
-        return str(val)
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole:
-            if orientation == Qt.Horizontal:
-                return str(self._current_df.columns[section])
-            else:
-                return str(section + 1 + self.current_page * self.page_size)
-        return None
-
-
-# ─────────────────────────────────────────────────────────
-# Table View Widget
-# ─────────────────────────────────────────────────────────
 class TableView(DataView):
+    """Self-contained table view with pagination and invalid-cell highlighting."""
+
     def __init__(self, incident_path, data_type, parent=None):
         super().__init__(incident_path, data_type, parent)
         self.model = None
@@ -185,157 +73,183 @@ class TableView(DataView):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.table_view = QTableView()
-        self.table_view.setAlternatingRowColors(True)
-        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table_view.verticalHeader().setVisible(False)
-        layout.addWidget(self.table_view, stretch=1)
-
-        # Bottom Controls
-        bottom_layout = QHBoxLayout()
-        self.btn_prev_page = QPushButton("Previous")
-        self.lbl_page_info = QLabel("Page 0 of 0")
-        self.btn_next_page = QPushButton("Next")
-
-        bottom_layout.addStretch()
-        bottom_layout.addWidget(self.btn_prev_page)
-        bottom_layout.addWidget(self.lbl_page_info)
-        bottom_layout.addWidget(self.btn_next_page)
-        bottom_layout.addStretch()
-        layout.addLayout(bottom_layout)
-
+        # Pagination controls
+        nav_layout = QHBoxLayout()
+        self.btn_prev_page = QPushButton("◀ Previous")
+        self.btn_next_page = QPushButton("Next ▶")
         self.btn_prev_page.clicked.connect(self._on_prev_page)
         self.btn_next_page.clicked.connect(self._on_next_page)
+        self.lbl_page_info = QLabel("Page 0 of 0")
+        self.lbl_page_info.setAlignment(Qt.AlignCenter)
 
-    def export(self):
-        """Satisfies the DataView interface. Exports the full underlying dataframe to a CSV file."""
-        if self.model is None or self.model._full_df.empty:
-            QMessageBox.warning(self, "No Data", "There is no data to export.")
-            return
+        nav_layout.addWidget(self.btn_prev_page)
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.lbl_page_info)
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.btn_next_page)
+        layout.addLayout(nav_layout)
 
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export Table to CSV", "filtered_data.csv",
-            "CSV Files (*.csv);;All Files (*)"
-        )
-        if file_path:
-            try:
-                export_df = self.model._full_df.copy()
-                inv_cols = [c for c in export_df.columns if c.upper().startswith('INVALID_')]
-                export_df.drop(columns=inv_cols, inplace=True, errors='ignore')
-                export_df.to_csv(file_path, index=False)
-                QMessageBox.information(self, "Success", f"Table exported successfully to:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to export table:\n{e}")
-
-    def _reorder_columns(self, df):
-        """Reorders columns to: LOG TIME, SITE, DEVICE, analytes, [aggregated stats], observations, Latitude, Longitude, others."""
-        if df is None or df.empty:
-            return df
-
-        ordered = []
-
-        # 1. Core metadata columns first
-        for col in ['LOG TIME', 'SITE', 'DEVICE']:
-            if col in df.columns:
-                ordered.append(col)
-
-        # 2. Base analyte columns (from self.analyte_dec_pls)
-        for analyte in self.analyte_dec_pls.keys():
-            if analyte in df.columns and analyte not in ordered:
-                ordered.append(analyte)
-
-        # 3. Aggregated stat columns (_min, _max, _count) - placed before Latitude/Longitude
-        for analyte in self.analyte_dec_pls.keys():
-            for suffix in ['_min', '_max', '_count']:
-                col = f"{analyte}{suffix}"
-                if col in df.columns and col not in ordered:
-                    ordered.append(col)
-
-        # 4. Observations
-        if 'observations' in df.columns:
-            ordered.append('observations')
-
-        # 5. Coordinates
-        for col in ['Latitude', 'Longitude']:
-            if col in df.columns:
-                ordered.append(col)
-
-        # 6. INVALID_ columns
-        for col in df.columns:
-            if col.upper().startswith('INVALID_') and col not in ordered:
-                ordered.append(col)
-
-        # 7. Any remaining columns (catches anything we missed)
-        for col in df.columns:
-            if col not in ordered:
-                ordered.append(col)
-
-        return df[ordered]
+        # Table widget
+        self.table_view = QTableWidget()
+        self.table_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table_view.setAlternatingRowColors(True)
+        self.table_view.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table_view.setSortingEnabled(True)
+        self.table_view.verticalHeader().setVisible(False)
+        self.table_view.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table_view)
 
     def _render(self):
-        """Render the table with current filtered_data."""
-        if self.model is None:
-            self.model = PaginatedTableModel(dec_pls_dict=self.analyte_dec_pls, page_size=100)
-            self.table_view.setModel(self.model)
-        
-        # Reorder columns before passing to model
-        reordered_data = self._reorder_columns(self.filtered_data)
-        
-        # Drop columns that are completely empty (all NaN or empty strings)
-        if reordered_data is not None and not reordered_data.empty:
-            # Protect core metadata columns from being dropped
-            protected_cols = ['LOG TIME', 'SITE', 'DEVICE']
-            
-            # Temporarily replace empty/whitespace-only strings with NaN
-            temp_df = reordered_data.replace(r'^\s*$', np.nan, regex=True)
-            
-            # Find columns that have at least one non-NaN value
-            valid_cols = temp_df.dropna(axis=1, how='all').columns
-            
-            # Ensure protected columns are kept even if they are somehow empty
-            cols_to_keep = [col for col in reordered_data.columns if col in valid_cols or col in protected_cols]
-            reordered_data = reordered_data[cols_to_keep]
-        
-        # Use base class state
-        show_invalid_bg = not self.filter_summary.get("only_valid", False)
-        self.model.set_show_invalid_bg(show_invalid_bg)
-        self.model.set_active_thresholds(self.get_active_thresholds())
-        self.model.set_data(reordered_data)
+        """Render the table from current filtered_data."""
+        df = self.filtered_data
+        if df is None or df.empty:
+            self.model = PaginatedTableModel(pd.DataFrame())
+            self._update_table()
+            return
+
+        self.model = PaginatedTableModel(df)
         self._update_table()
 
     def update_data(self, *args, **kwargs):
-        """Alias for _render for compatibility."""
+        """Alias for _render to satisfy the DataView interface."""
         self._render()
 
+    def _build_invalid_cells(self):
+        """
+        Build a set of (row_index, analyte_name) tuples for cells that are
+        flagged as invalid. This is used for background highlighting when
+        'only_valid' is NOT selected.
+        """
+        invalid_cells = set()
+        df = self.model._current_df
+        if df is None or df.empty:
+            return invalid_cells
+
+        for col in df.columns:
+            if not str(col).upper().startswith("INVALID_"):
+                continue
+            analyte = col[len("INVALID_"):]
+            for row_idx in range(len(df)):
+                val = pd.to_numeric(df.iloc[row_idx][col], errors="coerce")
+                if pd.notna(val) and val > 0:
+                    invalid_cells.add((row_idx, analyte))
+
+        return invalid_cells
+
+    def _is_cell_invalid(self, row, col_name):
+        """Check if a cell should be highlighted as invalid."""
+        # Resolve base analyte name for aggregated columns (e.g., O2_min -> O2)
+        base_analyte = col_name
+        for suffix in ('_min', '_max', '_count', '_mean'):
+            if col_name.endswith(suffix):
+                base_analyte = col_name[:-len(suffix)]
+                break
+
+        if base_analyte not in self.analyte_dec_pls:
+            return False
+
+        return (row, base_analyte) in self._invalid_cells
+
     def _update_table(self):
-        if self.model.total_pages > 0:
-            self.lbl_page_info.setText(f"Page {self.model.current_page + 1} of {self.model.total_pages}")
-        else:
+        """Populate the QTableWidget from the current page of data."""
+        self.table_view.setSortingEnabled(False)
+
+        if not hasattr(self.model, '_current_df') or self.model._current_df.empty:
+            self.table_view.setRowCount(0)
+            self.table_view.setColumnCount(0)
             self.lbl_page_info.setText("Page 0 of 0")
+            self.btn_prev_page.setEnabled(False)
+            self.btn_next_page.setEnabled(False)
+            return
 
+        df = self.model._current_df
+        cols = list(df.columns)
+
+        # Build invalid cell set for highlighting
+        self._invalid_cells = self._build_invalid_cells()
+
+        # Determine visible columns
+        visible_cols = []
+        for col in cols:
+            if str(col).upper().startswith("INVALID_"):
+                continue
+            visible_cols.append(col)
+
+        self.table_view.setColumnCount(len(visible_cols))
+        self.table_view.setHorizontalHeaderLabels(visible_cols)
+        self.table_view.setRowCount(len(df))
+
+        for row_idx in range(len(df)):
+            for col_idx, col_name in enumerate(visible_cols):
+                value = df.iloc[row_idx][col_name]
+
+                # Format the display text
+                if pd.isna(value):
+                    display = ""
+                elif col_name in self.analyte_dec_pls:
+                    dec_pls = self.analyte_dec_pls[col_name]
+                    try:
+                        display = f"{float(value):.{dec_pls}f}"
+                    except (TypeError, ValueError):
+                        display = str(value)
+                elif col_name == 'LOG TIME':
+                    try:
+                        display = pd.to_datetime(value).strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        display = str(value)
+                else:
+                    display = str(value) if value is not None else ""
+
+                item = QTableWidgetItem(display)
+
+                # Highlight invalid cells with background color
+                if self._is_cell_invalid(row_idx, col_name):
+                    item.setBackground(INVALID_BG_COLOR)
+                    item.setForeground(INVALID_FG_COLOR)
+
+                # Right-align numeric columns
+                if col_name in self.analyte_dec_pls:
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+                self.table_view.setItem(row_idx, col_idx, item)
+
+        # Update pagination info
+        self.lbl_page_info.setText(
+            f"Page {self.model.current_page + 1} of {self.model.total_pages}"
+        )
         self.btn_prev_page.setEnabled(self.model.current_page > 0)
-        self.btn_next_page.setEnabled(self.model.current_page < self.model.total_pages - 1)
+        self.btn_next_page.setEnabled(
+            self.model.current_page < self.model.total_pages - 1
+        )
 
+        # Column sizing and visibility
         header = self.table_view.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
 
-        if not hasattr(self.model, '_current_df') or self.model._current_df.empty:
-            return
+        # Determine if we should hide the non-grouped column for aggregated data
+        interval = str(self.filter_summary.get("interval", "Raw")).strip()
+        is_aggregated = interval.lower() != "raw"
+        group_by = str(self.filter_summary.get("group_by", "Device")).strip().lower()
 
-        cols = list(self.model._current_df.columns)
-        for i, col in enumerate(cols):
-            if col.upper().startswith("INVALID_"):
+        for i, col in enumerate(visible_cols):
+            # Hide SITE if aggregated and grouping by DEVICE
+            if is_aggregated and group_by == "device" and col.upper() == "SITE":
+                self.table_view.setColumnHidden(i, True)
+                continue
+
+            # Hide DEVICE if aggregated and grouping by SITE
+            if is_aggregated and group_by == "site" and col.upper() == "DEVICE":
                 self.table_view.setColumnHidden(i, True)
                 continue
 
             self.table_view.setColumnHidden(i, False)
 
             if col == 'LOG TIME':
-                self.table_view.setColumnWidth(i, 190)      # Wider
+                self.table_view.setColumnWidth(i, 190)
             elif col == 'DEVICE':
                 self.table_view.setColumnWidth(i, 140)
             elif col == 'SITE':
-                self.table_view.setColumnWidth(i, 80)        # Narrower
+                self.table_view.setColumnWidth(i, 80)
             elif col == 'observations':
                 self.table_view.setColumnWidth(i, 250)
             elif col in self.analyte_dec_pls:
@@ -344,6 +258,7 @@ class TableView(DataView):
                 self.table_view.setColumnWidth(i, 100)
 
         header.setStretchLastSection(True)
+        self.table_view.setSortingEnabled(True)
 
     def _on_next_page(self):
         """Handles the Next button click."""
@@ -354,3 +269,32 @@ class TableView(DataView):
         """Handles the Previous button click."""
         if self.model and self.model.prev_page():
             self._update_table()
+
+    def export(self):
+        """Export the current table data to CSV."""
+        if self.model is None or self.model._full_df.empty:
+            QMessageBox.warning(self, "No Data", "No data to export.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Table Data", "table_export.csv",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        if file_path:
+            try:
+                export_df = self.model._full_df.copy()
+                # Remove INVALID_ columns from export
+                inv_cols = [
+                    c for c in export_df.columns
+                    if str(c).upper().startswith("INVALID_")
+                ]
+                export_df = export_df.drop(columns=inv_cols, errors="ignore")
+                export_df.to_csv(file_path, index=False)
+                QMessageBox.information(
+                    self, "Success",
+                    f"Table data exported to:\n{file_path}"
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Error", f"Failed to export table:\n{e}"
+                )
